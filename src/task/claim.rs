@@ -19,7 +19,16 @@ pub fn claim_next_task(
     repo_root: &Path,
     project: Option<&str>,
 ) -> Result<Option<Task>> {
-    let _lock = acquire_claim_lock(repo_root)?;
+    claim_next_task_with_lock_dir(git_root, repo_root, project, None)
+}
+
+fn claim_next_task_with_lock_dir(
+    git_root: &Path,
+    repo_root: &Path,
+    project: Option<&str>,
+    lock_dir_override: Option<&Path>,
+) -> Result<Option<Task>> {
+    let _lock = acquire_claim_lock(repo_root, lock_dir_override)?;
 
     let tasks = store::load_tasks(git_root)?;
     if tasks.is_empty() {
@@ -76,12 +85,15 @@ fn max_date() -> NaiveDate {
     NaiveDate::from_ymd_opt(9999, 12, 31).unwrap()
 }
 
-fn acquire_claim_lock(repo_root: &Path) -> Result<ClaimLock> {
-    let crank_dir = dirs::home_dir()
-        .context("Could not find home directory")?
-        .join(".crank")
-        .join("locks")
-        .join(repo_id(repo_root));
+fn acquire_claim_lock(repo_root: &Path, lock_dir_override: Option<&Path>) -> Result<ClaimLock> {
+    let crank_dir = match lock_dir_override {
+        Some(dir) => dir.to_path_buf(),
+        None => dirs::home_dir()
+            .context("Could not find home directory")?
+            .join(".crank")
+            .join("locks")
+            .join(repo_id(repo_root)),
+    };
 
     std::fs::create_dir_all(&crank_dir)
         .with_context(|| format!("failed to create crank lock dir: {}", crank_dir.display()))?;
@@ -152,6 +164,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let git_root = dir.path();
         let repo_root = dir.path();
+        let lock_dir = dir.path().join("locks");
         let issues = git_root.join(".issues");
         fs::create_dir_all(&issues).unwrap();
 
@@ -166,10 +179,14 @@ mod tests {
         write_task(&issues, "b222", 5, "open", "2024-12-29", "");
         write_task(&issues, "c333", 4, "open", "2024-12-28", "");
 
-        let claimed = claim_next_task(git_root, repo_root, None).unwrap().unwrap();
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+            .unwrap()
+            .unwrap();
         assert_eq!(claimed.id, "b222");
 
-        let claimed = claim_next_task(git_root, repo_root, None).unwrap().unwrap();
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+            .unwrap()
+            .unwrap();
         assert_eq!(claimed.id, "c333");
     }
 
@@ -178,6 +195,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let git_root = dir.path();
         let repo_root = dir.path();
+        let lock_dir = dir.path().join("locks");
         let issues = git_root.join(".issues");
         fs::create_dir_all(&issues).unwrap();
 
@@ -186,9 +204,10 @@ mod tests {
         let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
         fs::write(&other, content).unwrap();
 
-        let claimed = claim_next_task(git_root, repo_root, Some("crank"))
-            .unwrap()
-            .unwrap();
+        let claimed =
+            claim_next_task_with_lock_dir(git_root, repo_root, Some("crank"), Some(&lock_dir))
+                .unwrap()
+                .unwrap();
         assert_eq!(claimed.id, "a111");
     }
 
@@ -197,13 +216,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let git_root = dir.path();
         let repo_root = dir.path();
+        let lock_dir = dir.path().join("locks");
         let issues = git_root.join(".issues");
         fs::create_dir_all(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         write_task(&issues, "b222", 3, "open", "2024-12-29", "");
 
-        let claimed = claim_next_task(git_root, repo_root, None).unwrap().unwrap();
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+            .unwrap()
+            .unwrap();
         assert_eq!(claimed.id, "b222");
     }
 }
