@@ -1,0 +1,91 @@
+use std::process::Command;
+
+use anyhow::{anyhow, Context, Result};
+
+use crate::autopilot::logging;
+use crate::task::git;
+
+pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
+    if !std::env::var("TMUX").unwrap_or_default().is_empty() {
+        return Err(anyhow!("crank tmux must be run outside tmux"));
+    }
+    if concurrency == 0 {
+        return Err(anyhow!("concurrency must be at least 1"));
+    }
+
+    let git_root = git::git_root()?;
+    let session = match project.as_deref() {
+        Some(name) => format!("crank({name})"),
+        None => "crank".to_string(),
+    };
+
+    if session_exists(&session)? {
+        return Err(anyhow!("tmux session already exists: {session}"));
+    }
+
+    let project_arg = project
+        .as_deref()
+        .map(|name| format!(" --project {name}"))
+        .unwrap_or_default();
+
+    for id in 1..=concurrency {
+        let window = format!("worker-{id}");
+        let cmd = format!("crank worker --id {id}{project_arg}");
+        if id == 1 {
+            let status = Command::new("tmux")
+                .args(["new-session", "-d", "-s", &session, "-n", &window, "-c"])
+                .arg(&git_root)
+                .arg(&cmd)
+                .status()
+                .context("failed to create tmux session")?;
+            if !status.success() {
+                return Err(anyhow!("failed to create tmux session"));
+            }
+        } else {
+            let status = Command::new("tmux")
+                .args(["new-window", "-t", &session, "-n", &window, "-c"])
+                .arg(&git_root)
+                .arg(&cmd)
+                .status()
+                .context("failed to create tmux window")?;
+            if !status.success() {
+                return Err(anyhow!("failed to create tmux window"));
+            }
+        }
+    }
+
+    let log_dir = logging::log_dir()?;
+    let mut tail_cmd = String::from("tail -n 200 -F");
+    for id in 1..=concurrency {
+        tail_cmd.push_str(&format!(
+            " {}/worker-{}.log {}/opencode-{}.log",
+            log_dir.display(),
+            id,
+            log_dir.display(),
+            id
+        ));
+    }
+    let status = Command::new("tmux")
+        .args(["new-window", "-d", "-t", &session, "-n", "logs", "-c"])
+        .arg(&git_root)
+        .arg(&tail_cmd)
+        .status()
+        .context("failed to create tmux logs window")?;
+    if !status.success() {
+        return Err(anyhow!("failed to create tmux logs window"));
+    }
+
+    println!("Created tmux session: {session}");
+    println!("Attach with: tmux attach -t {session}");
+    Ok(())
+}
+
+fn session_exists(name: &str) -> Result<bool> {
+    let status = Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .status();
+    match status {
+        Ok(status) => Ok(status.success()),
+        Err(err) => Err(err.into()),
+    }
+}

@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+
+# Nix/direnv
+.direnv/
+result
+result-*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store

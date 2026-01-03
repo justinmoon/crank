@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pane="${TMUX_PANE:-}"
+if [[ -z "$pane" ]]; then
+  exit 0
+fi
+
+crank nudge --pane "$pane" >/dev/null 2>&1 || true
