@@ -29,10 +29,10 @@
               buildInputs = with pkgs; [
                 openssl
                 pkg-config
-              ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-                pkgs.darwin.apple_sdk.frameworks.Security
-                pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-              ];
+              ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks; [
+                Security
+                SystemConfiguration
+              ]);
               nativeBuildInputs = with pkgs; [ pkg-config ];
             };
 
@@ -57,10 +57,10 @@
             cargo-watch
             just
             git
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-          ];
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks; [
+            Security
+            SystemConfiguration
+          ]);
           shellHook = ''
             export IN_NIX_SHELL=1
           '';
