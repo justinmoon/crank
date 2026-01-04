@@ -48,7 +48,9 @@ async fn send_review_prompt(directory: &str, prompt: &str, timeout_ms: u64) -> R
         .arg("--format")
         .arg("json")
         .arg("--agent")
-        .arg("review")
+        // Opencode's built-in agent list can vary by install.
+        // "review" doesn't exist in some environments, but "general" does.
+        .arg("general")
         .arg(prompt)
         .current_dir(directory)
         .stdout(Stdio::piped())
@@ -56,34 +58,64 @@ async fn send_review_prompt(directory: &str, prompt: &str, timeout_ms: u64) -> R
         .spawn()?;
 
     let stdout = child.stdout.take().unwrap();
-    let mut reader = BufReader::new(stdout).lines();
+    let stderr = child.stderr.take().unwrap();
 
-    let mut all_output = Vec::new();
-    let read_output = async {
+    let read_stdout = async move {
+        let mut reader = BufReader::new(stdout).lines();
+        let mut lines = Vec::new();
         while let Ok(Some(line)) = reader.next_line().await {
-            all_output.push(line);
+            lines.push(line);
         }
-        child.wait().await
+        lines
+    };
+
+    let read_stderr = async move {
+        let mut reader = BufReader::new(stderr).lines();
+        let mut lines = Vec::new();
+        while let Ok(Some(line)) = reader.next_line().await {
+            lines.push(line);
+        }
+        lines
+    };
+
+    let read_output = async {
+        let (stdout_lines, stderr_lines, status) =
+            tokio::join!(read_stdout, read_stderr, child.wait());
+        (stdout_lines, stderr_lines, status)
     };
 
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), read_output).await;
 
     match result {
-        Ok(Ok(status)) => {
+        Ok((stdout_lines, stderr_lines, Ok(status))) => {
+            let mut combined = Vec::with_capacity(stdout_lines.len() + stderr_lines.len());
+            combined.extend(stdout_lines);
+            combined.extend(stderr_lines);
+            let output = combined.join("\n");
+
             if !status.success() {
                 return Err(anyhow::anyhow!(
-                    "opencode run failed with exit code: {:?}",
-                    status.code()
+                    "opencode run failed with exit code: {:?}\n{}",
+                    status.code(),
+                    output
                 ));
             }
-            let stdout = all_output.join("\n");
-            let response = extract_response_text(&stdout);
+
+            let response = extract_response_text(&output);
             if response.trim().is_empty() {
-                return Err(anyhow::anyhow!("opencode run returned empty response"));
+                // Sometimes opencode prints non-JSON text despite `--format json`.
+                // In that case, fall back to the raw output so PASS/FAIL parsing can still work.
+                if output.trim().is_empty() {
+                    return Err(anyhow::anyhow!("opencode run returned empty response"));
+                }
+                return Ok(output);
             }
+
             Ok(response)
         }
-        Ok(Err(e)) => Err(anyhow::anyhow!("opencode run failed: {}", e)),
+        Ok((_stdout_lines, _stderr_lines, Err(e))) => {
+            Err(anyhow::anyhow!("opencode run failed: {}", e))
+        }
         Err(_) => {
             let _ = child.kill().await;
             Err(anyhow::anyhow!("opencode run timed out"))
@@ -113,36 +145,36 @@ fn extract_response_text(json_events: &str) -> String {
 }
 
 fn collect_text_from_value(value: &serde_json::Value) -> String {
-    let mut parts = vec![];
+    let mut parts = Vec::new();
 
-    if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
-        parts.push(text.to_string());
-    }
-
-    if let Some(text) = value
-        .get("part")
-        .and_then(|p| p.get("text"))
-        .and_then(|v| v.as_str())
-    {
-        parts.push(text.to_string());
-    }
-
-    if let Some(items) = value.get("parts").and_then(|v| v.as_array()) {
-        for item in items {
-            let text = collect_text_from_value(item);
-            if !text.is_empty() {
-                parts.push(text);
+    match value {
+        serde_json::Value::String(text) => {
+            parts.push(text.clone());
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                let text = collect_text_from_value(item);
+                if !text.is_empty() {
+                    parts.push(text);
+                }
             }
         }
-    }
+        serde_json::Value::Object(map) => {
+            for (key, item) in map {
+                if key == "text" {
+                    if let Some(text) = item.as_str() {
+                        parts.push(text.to_string());
+                        continue;
+                    }
+                }
 
-    if let Some(items) = value.get("data").and_then(|v| v.as_array()) {
-        for item in items {
-            let text = collect_text_from_value(item);
-            if !text.is_empty() {
-                parts.push(text);
+                let text = collect_text_from_value(item);
+                if !text.is_empty() {
+                    parts.push(text);
+                }
             }
         }
+        _ => {}
     }
 
     parts.join("")
@@ -151,38 +183,44 @@ fn collect_text_from_value(value: &serde_json::Value) -> String {
 /// Parse review output for PASS/FAIL
 fn parse_review_output(output: &str) -> ReviewResult {
     let first_line = output.lines().next().unwrap_or("").trim();
+    let first_line_upper = first_line.to_ascii_uppercase();
 
-    if first_line == "PASS" {
+    if first_line_upper == "PASS" || first_line_upper.starts_with("PASS") {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
         };
     }
 
-    if let Some(reason) = first_line.strip_prefix("FAIL:") {
+    if first_line_upper.starts_with("FAIL:") {
+        let reason = first_line
+            .split_once(':')
+            .map(|(_, rest)| rest)
+            .unwrap_or("")
+            .trim();
         return ReviewResult {
             status: "fail".to_string(),
-            reason: Some(reason.trim().to_string()),
+            reason: Some(reason.to_string()),
         };
     }
 
+    let output_upper = output.to_ascii_uppercase();
+
     // Try to find PASS/FAIL anywhere
-    if output.contains("PASS") {
+    if output_upper.contains("PASS") {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
         };
     }
 
-    if output.contains("FAIL:") {
-        if let Some(start) = output.find("FAIL:") {
-            let rest = &output[start + 5..];
-            let reason = rest.lines().next().unwrap_or("").trim();
-            return ReviewResult {
-                status: "fail".to_string(),
-                reason: Some(reason.to_string()),
-            };
-        }
+    if let Some(start) = output_upper.find("FAIL:") {
+        let rest = &output[start + 5..];
+        let reason = rest.lines().next().unwrap_or("").trim();
+        return ReviewResult {
+            status: "fail".to_string(),
+            reason: Some(reason.to_string()),
+        };
     }
 
     ReviewResult {
