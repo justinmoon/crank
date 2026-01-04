@@ -6,6 +6,7 @@ pub fn repo_crank_dir(git_root: &Path) -> PathBuf {
     git_root.join(".crank")
 }
 
+#[allow(dead_code)]
 pub fn repo_workflows_dir(git_root: &Path) -> PathBuf {
     repo_crank_dir(git_root).join("workflows")
 }
@@ -14,11 +15,13 @@ pub fn user_crank_dir_from(home_dir: &Path) -> PathBuf {
     home_dir.join(".crank")
 }
 
+#[allow(dead_code)]
 pub fn user_crank_dir() -> Result<PathBuf> {
     let home_dir = dirs::home_dir().context("Could not find home directory")?;
     Ok(user_crank_dir_from(&home_dir))
 }
 
+#[allow(dead_code)]
 pub fn user_workflows_dir_opt() -> Option<PathBuf> {
     dirs::home_dir().map(|dir| user_crank_dir_from(&dir).join("workflows"))
 }
@@ -33,6 +36,7 @@ pub fn read_to_string(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read file: {}", path.display()))
 }
 
+#[allow(dead_code)]
 pub fn write_string(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
