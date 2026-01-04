@@ -5,6 +5,7 @@ mod agentsmd;
 mod crank_io;
 mod git;
 mod opencode;
+mod tutorial;
 use task::model::SupervisionMode;
 
 #[path = "autopilot/mod.rs"]
@@ -104,6 +105,13 @@ enum Commands {
     #[command(name = "agents.md", alias = "agentsmd")]
     AgentsMd,
 
+    /// Browse merge tutorials (inbox view)
+    Inbox,
+
+    /// Tutorial commands (generate/show)
+    #[command(subcommand)]
+    Tutorial(tutorial::cli::TutorialCommand),
+
     /// Show active alerts in a tmux popup
     Alerts {
         /// Watch for new alerts and auto-pop the list
@@ -139,6 +147,15 @@ async fn main() -> Result<()> {
 
         Commands::AgentsMd => {
             agentsmd::print_agentsmd();
+        }
+
+        Commands::Inbox => {
+            let repo_root = task::git::repo_root()?;
+            tutorial::inbox::run_inbox(&repo_root)?;
+        }
+
+        Commands::Tutorial(cmd) => {
+            tutorial::cli::run_command(cmd)?;
         }
 
         Commands::Build(args) => {

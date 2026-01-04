@@ -69,6 +69,7 @@ Key steps (in order):
 - `conflicts`: `git merge-tree` check
 - `approval`: optional (only if `--notify`)
 - `merge`: merge + push
+- `tutorial`: generate post-merge tutorial (best-effort)
 
 ## Release workflow
 
