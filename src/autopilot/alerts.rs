@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
@@ -112,12 +113,12 @@ pub fn dismiss_alert(alert_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn show_alerts_popup(pane: &str) -> Result<()> {
+fn show_alerts_popup_for_client(client: &str) -> Result<()> {
     if std::env::var("TMUX").unwrap_or_default().is_empty() {
         return Ok(());
     }
-    let pane = pane.trim();
-    if pane.is_empty() {
+    let client = client.trim();
+    if client.is_empty() {
         return Ok(());
     }
 
@@ -127,13 +128,24 @@ pub fn show_alerts_popup(pane: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("crank binary path is not valid UTF-8"))?;
 
     let status = Command::new("tmux")
-        .args(["display-popup", "-E", "-t", pane, "-w", "70%", "-h", "60%"])
+        .args(["display-popup", "-E", "-c", client, "-w", "70%", "-h", "60%"])
         .arg(crank_bin)
         .arg("alerts")
         .status()
         .context("failed to open alerts popup")?;
     if !status.success() {
         return Err(anyhow!("tmux display-popup failed"));
+    }
+    Ok(())
+}
+
+pub fn show_alerts_popup_for_all_clients() -> Result<()> {
+    if std::env::var("TMUX").unwrap_or_default().is_empty() {
+        return Ok(());
+    }
+    let clients = tmux_clients()?;
+    for client in clients {
+        let _ = show_alerts_popup_for_client(&client);
     }
     Ok(())
 }
@@ -146,6 +158,30 @@ pub fn run_alerts_picker() -> Result<()> {
 
     restore_terminal(&mut terminal)?;
     result
+}
+
+pub fn run_alerts_watch() -> Result<()> {
+    if std::env::var("TMUX").unwrap_or_default().is_empty() {
+        return Err(anyhow!("crank alerts --watch must run inside tmux"));
+    }
+
+    let mut last_seen = latest_alert_timestamp(&load_alerts().unwrap_or_default());
+    let mut last_popup = Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now);
+
+    loop {
+        let alerts = load_alerts().unwrap_or_default();
+        let latest = latest_alert_timestamp(&alerts);
+
+        if latest > last_seen {
+            if last_popup.elapsed() >= Duration::from_millis(750) {
+                let _ = show_alerts_popup_for_all_clients();
+                last_popup = Instant::now();
+            }
+            last_seen = latest;
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 fn alerts_dir() -> Result<PathBuf> {
@@ -164,6 +200,14 @@ fn write_alert(alert: &Alert) -> Result<()> {
     let content = serde_json::to_string_pretty(alert)?;
     crate::crank_io::write_string(&path, content)?;
     Ok(())
+}
+
+fn latest_alert_timestamp(alerts: &[Alert]) -> i64 {
+    alerts
+        .iter()
+        .map(|alert| alert.created_at)
+        .max()
+        .unwrap_or(0)
 }
 
 fn tmux_window_info(pane: &str) -> Result<(Option<String>, Option<String>)> {
@@ -191,6 +235,33 @@ fn tmux_window_info(pane: &str) -> Result<(Option<String>, Option<String>)> {
     let window_id = parts.next().map(|value| value.to_string());
     let window_name = parts.next().map(|value| value.to_string());
     Ok((window_id, window_name))
+}
+
+fn tmux_clients() -> Result<Vec<String>> {
+    let output = Command::new("tmux")
+        .args(["list-clients", "-F", "#{client_tty} #{client_attached}"])
+        .output();
+
+    let output = match output {
+        Ok(output) if output.status.success() => output,
+        _ => return Ok(Vec::new()),
+    };
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let mut clients = Vec::new();
+    for line in raw.lines() {
+        let mut parts = line.split_whitespace();
+        let client_tty = parts.next();
+        let client_attached = parts.next();
+
+        if client_attached == Some("1") {
+            if let Some(client_tty) = client_tty {
+                clients.push(client_tty.to_string());
+            }
+        }
+    }
+
+    Ok(clients)
 }
 
 struct AlertState {

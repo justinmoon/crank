@@ -320,10 +320,6 @@ fn emit_alert(
             .log("warn", &format!("failed to create alert: {err}"))?;
         return Ok(());
     }
-    if let Err(err) = alerts::show_alerts_popup(ctx.tmux_pane) {
-        ctx.logger
-            .log("warn", &format!("failed to show alerts popup: {err}"))?;
-    }
     Ok(())
 }
 

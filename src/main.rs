@@ -105,7 +105,11 @@ enum Commands {
     AgentsMd,
 
     /// Show active alerts in a tmux popup
-    Alerts,
+    Alerts {
+        /// Watch for new alerts and auto-pop the list
+        #[arg(long)]
+        watch: bool,
+    },
 
     /// Build a workflow instance from a template
     Build(workflow::BuildArgs),
@@ -169,8 +173,12 @@ async fn main() -> Result<()> {
             println!("Wrote help marker: {}", path.display());
         }
 
-        Commands::Alerts => {
-            orchestrator::alerts::run_alerts_picker()?;
+        Commands::Alerts { watch } => {
+            if watch {
+                orchestrator::alerts::run_alerts_watch()?;
+            } else {
+                orchestrator::alerts::run_alerts_picker()?;
+            }
         }
 
         Commands::Nudge { pane } => {

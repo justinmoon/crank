@@ -55,6 +55,7 @@ supervision: supervised
 ### Tmux Modal UI
 - New `crank alerts` command renders a TUI list of alerts.
 - Opens via `tmux display-popup` from the worker.
+- `crank alerts --watch` runs a watcher that auto-pops the alerts modal on new alerts for all attached tmux clients.
 - Selection moves to the alert's tmux window/pane and clears the alert.
 - Keys: `j/k` (move), `enter` (jump), `d` (dismiss), `q` (quit).
 

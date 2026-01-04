@@ -88,6 +88,17 @@ pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>
         return Err(anyhow!("failed to create tmux logs window"));
     }
 
+    let status = Command::new("tmux")
+        .args(["new-window", "-d", "-t", &session, "-n", "alerts", "-c"])
+        .arg(&git_root)
+        .arg(crank_bin)
+        .args(["alerts", "--watch"])
+        .status()
+        .context("failed to create tmux alerts window")?;
+    if !status.success() {
+        return Err(anyhow!("failed to create tmux alerts window"));
+    }
+
     println!("Created tmux session: {session}");
     println!("Attach with: tmux attach -t {session}");
     Ok(())
