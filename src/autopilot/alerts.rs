@@ -79,7 +79,6 @@ pub fn create_task_alert(
     };
 
     write_alert(&alert)?;
-    refresh_alert_count()?;
     Ok(alert)
 }
 
@@ -110,7 +109,6 @@ pub fn load_alerts() -> Result<Vec<Alert>> {
 pub fn dismiss_alert(alert_id: &str) -> Result<()> {
     let path = alert_path(alert_id)?;
     let _ = fs::remove_file(path);
-    refresh_alert_count()?;
     Ok(())
 }
 
@@ -161,30 +159,11 @@ fn alert_path(id: &str) -> Result<PathBuf> {
     Ok(alerts_dir()?.join(format!("{id}.json")))
 }
 
-fn alert_count_path() -> Result<PathBuf> {
-    Ok(alerts_dir()?.join("count"))
-}
-
 fn write_alert(alert: &Alert) -> Result<()> {
     let path = alert_path(&alert.id)?;
     let content = serde_json::to_string_pretty(alert)?;
     crate::crank_io::write_string(&path, content)?;
     Ok(())
-}
-
-fn refresh_alert_count() -> Result<usize> {
-    let dir = alerts_dir()?;
-    let mut count = 0usize;
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-            count += 1;
-        }
-    }
-    let count_path = alert_count_path()?;
-    crate::crank_io::write_string(&count_path, format!("{count}\n"))?;
-    Ok(count)
 }
 
 fn tmux_window_info(pane: &str) -> Result<(Option<String>, Option<String>)> {

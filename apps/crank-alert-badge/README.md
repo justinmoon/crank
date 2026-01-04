@@ -18,4 +18,3 @@ swift build -c release
 ## Configuration
 
 - `CRANK_ALERTS_DIR`: override alerts directory (default: `~/.crank/alerts`)
-- `CRANK_ALERT_COUNT_PATH`: override count file path (default: `~/.crank/alerts/count`)

@@ -42,7 +42,7 @@ supervision: supervised
 ### Storage
 - Alerts live in `~/.crank/alerts/` as JSON files.
 - Each alert includes: task id, title, alert type, tmux window/pane targets, timestamp.
-- Maintain `~/.crank/alerts/count` with the current alert count.
+- Alert count is derived by counting `.json` files in the alerts directory.
 
 ### Alert Types
 - `completed`: task finished and needs user attention.
@@ -60,7 +60,7 @@ supervision: supervised
 
 ## Swift Menu Bar Badge
 - Minimal Swift app that shows the current alert count in the menu bar.
-- Reads `~/.crank/alerts/count` (fallback: count alert files if missing).
+- Counts `.json` files in `~/.crank/alerts`.
 - No Xcode GUI tools; build from the CLI using swiftc or swift build.
 
 ## Migration

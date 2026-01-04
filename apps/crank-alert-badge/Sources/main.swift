@@ -2,16 +2,9 @@ import AppKit
 
 let env = ProcessInfo.processInfo.environment
 let alertsDir = env["CRANK_ALERTS_DIR"] ?? "\(NSHomeDirectory())/.crank/alerts"
-let countPath = env["CRANK_ALERT_COUNT_PATH"] ?? "\(alertsDir)/count"
 let refreshInterval: TimeInterval = 5.0
 
 func readCount() -> Int {
-    if let raw = try? String(contentsOfFile: countPath, encoding: .utf8) {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let value = Int(trimmed) {
-            return value
-        }
-    }
     return countAlertFiles(in: alertsDir)
 }
 
