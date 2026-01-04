@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 # Check for nix shell
 [private]
 nix-check:
-    @test -n "$IN_NIX_SHELL" || (echo "Run 'nix develop' first" && exit 1)
+    @test -n "${IN_NIX_SHELL:-}" || (echo "Run 'nix develop' first" && exit 1)
 
 # List available commands
 default:

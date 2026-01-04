@@ -56,11 +56,11 @@ pub fn create_task_interactive(
     let id = store::generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     let task_path = tasks_dir.join(&filename);
     let rel_task_path = format!(".crank/{filename}");
 
-    std::fs::create_dir_all(&tasks_dir).map_err(|err| {
+    crate::crank_io::ensure_dir(&tasks_dir).map_err(|err| {
         anyhow!(
             "failed to create tasks directory: {} ({})",
             tasks_dir.display(),

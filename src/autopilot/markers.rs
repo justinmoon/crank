@@ -6,8 +6,8 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 
 pub fn read_current_task_id(repo_root: &Path) -> Result<String> {
-    let marker = repo_root.join(".crank").join(".current");
-    let content = fs::read_to_string(&marker)
+    let marker = crate::crank_io::repo_crank_dir(repo_root).join(".current");
+    let content = crate::crank_io::read_to_string(&marker)
         .with_context(|| format!("failed to read current task marker: {}", marker.display()))?;
     parse_current_task_id(&content)
         .ok_or_else(|| anyhow!("current task marker is empty: {}", marker.display()))
@@ -69,7 +69,7 @@ pub fn read_activity_time(task_id: &str) -> Result<Option<SystemTime>> {
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&path)
+    let content = crate::crank_io::read_to_string(&path)
         .with_context(|| format!("failed to read activity marker: {}", path.display()))?;
     let trimmed = content.trim();
     if trimmed.is_empty() {
@@ -96,9 +96,7 @@ pub fn activity_marker_path(task_id: &str) -> Result<PathBuf> {
 }
 
 fn crank_dir() -> Result<PathBuf> {
-    Ok(dirs::home_dir()
-        .context("Could not find home directory")?
-        .join(".crank"))
+    crate::crank_io::user_crank_dir()
 }
 
 fn write_marker(path: &Path, label: &str) -> Result<()> {
@@ -106,11 +104,7 @@ fn write_marker(path: &Path, label: &str) -> Result<()> {
 }
 
 fn write_marker_with_content(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create marker directory: {}", parent.display()))?;
-    }
-    fs::write(path, content)
+    crate::crank_io::write_string(path, content)
         .with_context(|| format!("failed to write marker: {}", path.display()))?;
     Ok(())
 }

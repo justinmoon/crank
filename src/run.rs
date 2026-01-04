@@ -287,8 +287,8 @@ fn run_agent_step(git_root: &Path, task: &Task) -> Result<()> {
 }
 
 fn read_current_task_id(git_root: &Path) -> Option<String> {
-    let path = git_root.join(".crank").join(".current");
-    let content = std::fs::read_to_string(&path).ok()?;
+    let path = crate::crank_io::repo_crank_dir(git_root).join(".current");
+    let content = crate::crank_io::read_to_string(&path).ok()?;
     task::parse_current_task_id(&content)
 }
 

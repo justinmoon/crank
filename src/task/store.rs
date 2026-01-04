@@ -25,7 +25,7 @@ struct TaskFrontmatter {
 }
 
 pub fn load_tasks(git_root: &Path) -> Result<Vec<Task>> {
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     let entries = match fs::read_dir(&tasks_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -51,7 +51,7 @@ pub fn load_tasks(git_root: &Path) -> Result<Vec<Task>> {
 }
 
 pub fn parse_task(path: &Path) -> Result<Task> {
-    let content = fs::read_to_string(path)
+    let content = crate::crank_io::read_to_string(path)
         .with_context(|| format!("failed to read task file: {}", path.display()))?;
 
     let (frontmatter, title_fallback) = parse_frontmatter(&content)?;
@@ -213,14 +213,14 @@ pub fn create_task_file(
     let id = generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     let task_path = tasks_dir.join(&filename);
 
-    fs::create_dir_all(&tasks_dir)
+    crate::crank_io::ensure_dir(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 
     let content = task_template(title, app, priority, &date, deps);
-    fs::write(&task_path, content)
+    crate::crank_io::write_string(&task_path, content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
     println!("Created: .crank/{filename}");
@@ -233,13 +233,13 @@ pub fn write_current_task_marker(git_root: &Path, task_id: &str) -> Result<()> {
         return Err(anyhow!("task id is required"));
     }
 
-    let tasks_dir = git_root.join(".crank");
-    fs::create_dir_all(&tasks_dir)
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
+    crate::crank_io::ensure_dir(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 
     let marker_path = tasks_dir.join(".current");
     let content = format!("{trimmed}\n");
-    fs::write(&marker_path, content).with_context(|| {
+    crate::crank_io::write_string(&marker_path, content).with_context(|| {
         format!(
             "failed to write current task marker: {}",
             marker_path.display()
@@ -260,7 +260,7 @@ pub fn update_task_priority(task_path: &Path, priority: i32) -> Result<()> {
 }
 
 fn update_frontmatter_field(task_path: &Path, key: &str, value: &str) -> Result<()> {
-    let content = fs::read_to_string(task_path)
+    let content = crate::crank_io::read_to_string(task_path)
         .with_context(|| format!("failed to read task file: {}", task_path.display()))?;
     let had_trailing_newline = content.ends_with('\n');
 
@@ -288,7 +288,7 @@ fn update_frontmatter_field(task_path: &Path, key: &str, value: &str) -> Result<
         new_content.push('\n');
     }
 
-    fs::write(task_path, new_content)
+    crate::crank_io::write_string(task_path, new_content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
     Ok(())
@@ -298,10 +298,10 @@ pub(crate) fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
     let git_dir = crate::task::git::git_common_dir_from(git_root)?;
     let exclude_path = git_dir.join("info").join("exclude");
     if let Some(parent) = exclude_path.parent() {
-        fs::create_dir_all(parent)
+        crate::crank_io::ensure_dir(parent)
             .with_context(|| format!("failed to create exclude dir: {}", parent.display()))?;
     }
-    let mut content = fs::read_to_string(&exclude_path).unwrap_or_default();
+    let mut content = crate::crank_io::read_to_string(&exclude_path).unwrap_or_default();
     if content.lines().any(|line| line.trim() == pattern) {
         return Ok(());
     }
@@ -310,7 +310,7 @@ pub(crate) fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
     }
     content.push_str(pattern);
     content.push('\n');
-    fs::write(&exclude_path, content).with_context(|| {
+    crate::crank_io::write_string(&exclude_path, content).with_context(|| {
         format!(
             "failed to update git exclude file: {}",
             exclude_path.display()
@@ -320,7 +320,7 @@ pub(crate) fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
 }
 
 pub fn toggle_task_status(task: &mut Task) -> Result<()> {
-    let content = fs::read_to_string(&task.path)
+    let content = crate::crank_io::read_to_string(&task.path)
         .with_context(|| format!("failed to read task file: {}", task.path.display()))?;
     let had_trailing_newline = content.ends_with('\n');
 
@@ -359,7 +359,7 @@ pub fn toggle_task_status(task: &mut Task) -> Result<()> {
         new_content.push('\n');
     }
 
-    fs::write(&task.path, new_content)
+    crate::crank_io::write_string(&task.path, new_content)
         .with_context(|| format!("failed to write task file: {}", task.path.display()))?;
 
     task.status = new_status.to_string();
@@ -383,7 +383,7 @@ pub fn delete_task(task: &Task) -> Result<()> {
 }
 
 pub fn add_dependency_to_file(task_path: &Path, dep: &Dependency) -> Result<()> {
-    let content = fs::read_to_string(task_path)
+    let content = crate::crank_io::read_to_string(task_path)
         .with_context(|| format!("failed to read task file: {}", task_path.display()))?;
     let had_trailing_newline = content.ends_with('\n');
 
@@ -427,14 +427,14 @@ pub fn add_dependency_to_file(task_path: &Path, dep: &Dependency) -> Result<()> 
         new_content.push('\n');
     }
 
-    fs::write(task_path, new_content)
+    crate::crank_io::write_string(task_path, new_content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
     Ok(())
 }
 
 pub fn remove_dependency_from_file(task_path: &Path, dep_id: &str) -> Result<()> {
-    let content = fs::read_to_string(task_path)
+    let content = crate::crank_io::read_to_string(task_path)
         .with_context(|| format!("failed to read task file: {}", task_path.display()))?;
     let had_trailing_newline = content.ends_with('\n');
 
@@ -499,7 +499,7 @@ pub fn remove_dependency_from_file(task_path: &Path, dep_id: &str) -> Result<()>
         new_content.push('\n');
     }
 
-    fs::write(task_path, new_content)
+    crate::crank_io::write_string(task_path, new_content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
     Ok(())
@@ -607,7 +607,7 @@ created: 2024-12-30
 crank merge
 ```
 "#;
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
 
         let task = parse_task(&path).unwrap();
         assert_eq!(task.id, "abcd");
@@ -640,7 +640,7 @@ created: 2024-12-30
 
 # Heading Title
 "#;
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
 
         let task = parse_task(&path).unwrap();
         assert_eq!(task.title, "Heading Title");
@@ -659,12 +659,12 @@ autopilot: true
 created: 2024-12-30
 ---
 "#;
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
 
         let mut task = parse_task(&path).unwrap();
         toggle_task_status(&mut task).unwrap();
 
-        let updated = fs::read_to_string(&path).unwrap();
+        let updated = crate::crank_io::read_to_string(&path).unwrap();
         assert!(updated.contains("status: open #33"));
     }
 
@@ -681,19 +681,19 @@ autopilot: true
 created: 2024-12-30
 ---
 "#;
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
 
         let dep = Dependency {
             id: "beef".to_string(),
             dep_type: "blocks".to_string(),
         };
         add_dependency_to_file(&path, &dep).unwrap();
-        let updated = fs::read_to_string(&path).unwrap();
+        let updated = crate::crank_io::read_to_string(&path).unwrap();
         assert!(updated.contains("depends_on:"));
         assert!(updated.contains("- id: beef"));
 
         remove_dependency_from_file(&path, "beef").unwrap();
-        let updated = fs::read_to_string(&path).unwrap();
+        let updated = crate::crank_io::read_to_string(&path).unwrap();
         assert!(!updated.contains("depends_on:"));
     }
 }

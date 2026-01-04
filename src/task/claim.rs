@@ -91,14 +91,15 @@ fn max_date() -> NaiveDate {
 fn acquire_claim_lock(repo_root: &Path, lock_dir_override: Option<&Path>) -> Result<ClaimLock> {
     let crank_dir = match lock_dir_override {
         Some(dir) => dir.to_path_buf(),
-        None => dirs::home_dir()
-            .context("Could not find home directory")?
-            .join(".crank")
-            .join("locks")
-            .join(repo_id(repo_root)),
+        None => {
+            let home_dir = dirs::home_dir().context("Could not find home directory")?;
+            crate::crank_io::user_crank_dir_from(&home_dir)
+                .join("locks")
+                .join(repo_id(repo_root))
+        }
     };
 
-    std::fs::create_dir_all(&crank_dir)
+    crate::crank_io::ensure_dir(&crank_dir)
         .with_context(|| format!("failed to create crank lock dir: {}", crank_dir.display()))?;
 
     let lock_dir = crank_dir.join("task-claim.lock.d");
@@ -142,7 +143,6 @@ impl Drop for ClaimLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     use tempfile::tempdir;
 
@@ -158,7 +158,7 @@ mod tests {
         let content = format!(
             "---\napp: crank\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\nautopilot: true\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
         );
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
         path
     }
 
@@ -168,8 +168,8 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
-        fs::create_dir_all(&issues).unwrap();
+        let issues = crate::crank_io::repo_crank_dir(git_root);
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(
             &issues,
@@ -199,13 +199,13 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
-        fs::create_dir_all(&issues).unwrap();
+        let issues = crate::crank_io::repo_crank_dir(git_root);
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         let other = issues.join("b222.md");
         let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\nautopilot: true\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
-        fs::write(&other, content).unwrap();
+        crate::crank_io::write_string(&other, content).unwrap();
 
         let claimed =
             claim_next_task_with_lock_dir(git_root, repo_root, Some("crank"), Some(&lock_dir))
@@ -220,8 +220,8 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
-        fs::create_dir_all(&issues).unwrap();
+        let issues = crate::crank_io::repo_crank_dir(git_root);
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         write_task(&issues, "b222", 3, "open", "2024-12-29", "");

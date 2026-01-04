@@ -555,7 +555,7 @@ fn build_list_items(state: &TuiState) -> Vec<ListItem<'static>> {
 
 fn render_preview(state: &TuiState) -> Paragraph<'_> {
     let content = if let Some(task) = state.selected_task() {
-        match std::fs::read_to_string(&task.path) {
+        match crate::crank_io::read_to_string(&task.path) {
             Ok(content) => content,
             Err(err) => format!("Error reading file: {err}"),
         }
