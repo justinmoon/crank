@@ -319,8 +319,14 @@ async fn merge_workflow_command(opts: git::MergeOptions) -> Result<()> {
         format!("worktree={}", worktree_path.display()),
         format!("timeout={}", opts.timeout),
         format!("notify_interval={}", opts.notify_interval),
-        format!("skip_pre_merge_flag={}", flag_value(opts.skip_pre_merge, "--skip")),
-        format!("skip_review_flag={}", flag_value(opts.skip_review, "--skip")),
+        format!(
+            "skip_pre_merge_flag={}",
+            flag_value(opts.skip_pre_merge, "--skip")
+        ),
+        format!(
+            "skip_review_flag={}",
+            flag_value(opts.skip_review, "--skip")
+        ),
         format!(
             "review_skip_tests_flag={}",
             flag_value(!opts.skip_pre_merge, "--skip-tests")
@@ -360,7 +366,13 @@ fn flag_value(enabled: bool, flag: &str) -> String {
 fn sanitize_workflow_component(value: &str) -> String {
     value
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 

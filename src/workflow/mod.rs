@@ -177,19 +177,16 @@ pub fn apply_template_at(git_root: &Path, args: &WorkflowApplyArgs) -> Result<()
             .map(|value| render_template(value, &resolved_vars))
             .filter(|value| !value.trim().is_empty());
         let deps = build_dependencies(&workflow_id, step.needs.as_deref());
-        let content = build_task_content(
-            &title,
-            &workflow_id,
-            &step.id,
-            run.as_deref(),
-            &date,
-            &deps,
-        );
+        let content =
+            build_task_content(&title, &workflow_id, &step.id, run.as_deref(), &date, &deps);
 
         store::write_task_file(&task_path, &content)?;
     }
 
-    println!("Applied workflow '{}' as '{}'", template.workflow, workflow_id);
+    println!(
+        "Applied workflow '{}' as '{}'",
+        template.workflow, workflow_id
+    );
     Ok(())
 }
 
@@ -317,8 +314,7 @@ fn render_template(input: &str, vars: &HashMap<String, String>) -> String {
 
 fn load_template(git_root: &Path, name: &str) -> Result<WorkflowTemplate> {
     let repo_path = repo_templates_dir(git_root).join(format!("{name}.workflow.toml"));
-    let user_path = user_templates_dir()
-        .map(|dir| dir.join(format!("{name}.workflow.toml")));
+    let user_path = user_templates_dir().map(|dir| dir.join(format!("{name}.workflow.toml")));
 
     let path = if repo_path.exists() {
         repo_path
@@ -450,11 +446,11 @@ pub async fn run_workflow_at(git_root: &Path, id: &str, concurrency: usize) -> R
                 return Ok(());
             }
 
-            let waiting: Vec<String> = manual_pending
-                .iter()
-                .map(|task| task.id.clone())
-                .collect();
-            println!("Workflow '{id}' waiting on manual steps: {}", waiting.join(", "));
+            let waiting: Vec<String> = manual_pending.iter().map(|task| task.id.clone()).collect();
+            println!(
+                "Workflow '{id}' waiting on manual steps: {}",
+                waiting.join(", ")
+            );
             return Ok(());
         }
 
@@ -462,10 +458,7 @@ pub async fn run_workflow_at(git_root: &Path, id: &str, concurrency: usize) -> R
         for task in runnable.into_iter().take(concurrency) {
             store::update_task_status(&task.path, model::TASK_STATUS_IN_PROGRESS)?;
             let workdir = git_root.to_path_buf();
-            let run = task
-                .run
-                .clone()
-                .unwrap_or_else(|| "".to_string());
+            let run = task.run.clone().unwrap_or_else(|| "".to_string());
             join_set.spawn(async move { run_step(workdir, task, run).await });
         }
 

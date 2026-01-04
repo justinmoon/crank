@@ -175,8 +175,7 @@ async fn approval_step(args: ApprovalArgs) -> Result<()> {
         None => git::get_main_worktree(&git_root).await?,
     };
 
-    let pending =
-        approval::create_pending(&branch, &args.base, &git_root, &target_repo).await?;
+    let pending = approval::create_pending(&branch, &args.base, &git_root, &target_repo).await?;
 
     println!("Merge ready for approval: crank approve {}", branch);
 
