@@ -142,7 +142,7 @@ enum Commands {
     Pending,
 
     /// Print AGENTS.md-style guide for crank
-    #[command(name = "agentsmd")]
+    #[command(name = "agents.md", alias = "agentsmd")]
     AgentsMd,
 
     /// Show status of active merge operations

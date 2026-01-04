@@ -9,7 +9,7 @@ Two tools in one:
 - Orchestration: crank tmux/worker/nudge/pause/ask-for-help/status/attach/merge/review
 
 ## Commands
-- crank agentsmd (this doc)
+- crank agents.md (this doc)
 - crank task create "title" -a app -p 1-5
 - crank task (or crank task next)
 - crank task claim --project <name> [--json]
