@@ -41,7 +41,7 @@ fi
 
 worktree=$(resolve_worktree "$worktree")
 
-args=("review" "--worktree" "$worktree" "--timeout" "$timeout_ms")
+args=("review" "$worktree" "--timeout" "$timeout_ms")
 if [[ "$skip_tests" == "true" ]]; then
   args+=("--skip-tests")
 fi
