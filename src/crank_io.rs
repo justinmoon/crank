@@ -37,11 +37,11 @@ pub fn read_to_string(path: &Path) -> Result<String> {
 }
 
 #[allow(dead_code)]
-pub fn write_string(path: &Path, content: &str) -> Result<()> {
+pub fn write_string(path: &Path, content: impl AsRef<str>) -> Result<()> {
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
-    std::fs::write(path, content)
+    std::fs::write(path, content.as_ref().as_bytes())
         .with_context(|| format!("failed to write file: {}", path.display()))
 }
 

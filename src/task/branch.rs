@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -16,7 +15,7 @@ pub fn generate_branch_name(task_path: &Path, _title: &str, _id: &str) -> Result
         ));
     }
 
-    let content = fs::read_to_string(task_path)
+    let content = crate::crank_io::read_to_string(task_path)
         .with_context(|| format!("failed to read task file: {}", task_path.display()))?;
     if content.trim().is_empty() {
         return Err(anyhow!("task file is empty: {}", task_path.display()));

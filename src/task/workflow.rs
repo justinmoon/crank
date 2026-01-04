@@ -108,7 +108,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
     let worktree_path = repo_root.join("worktrees").join(&branch);
 
     if !worktree_path.exists() {
-        fs::create_dir_all(worktree_path.parent().unwrap())
+        crate::crank_io::ensure_dir(worktree_path.parent().unwrap())
             .context("failed to create worktrees dir")?;
 
         let output = Command::new("git")
@@ -299,11 +299,11 @@ pub fn run_claim(json: bool, project: Option<String>) -> Result<()> {
 pub fn run_hooks_install() -> Result<()> {
     let git_root = git::git_root()?;
     let hooks_dir = git_root.join(".githooks");
-    fs::create_dir_all(&hooks_dir)
+    crate::crank_io::ensure_dir(&hooks_dir)
         .with_context(|| format!("failed to create hooks directory: {}", hooks_dir.display()))?;
 
     let hook_path = hooks_dir.join("commit-msg");
-    fs::write(&hook_path, COMMIT_MSG_HOOK)
+    crate::crank_io::write_string(&hook_path, COMMIT_MSG_HOOK)
         .with_context(|| format!("failed to write commit-msg hook: {}", hook_path.display()))?;
 
     let mut perms = fs::metadata(&hook_path)?.permissions();

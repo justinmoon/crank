@@ -143,7 +143,6 @@ impl Drop for ClaimLock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     use tempfile::tempdir;
 
@@ -159,7 +158,7 @@ mod tests {
         let content = format!(
             "---\napp: crank\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\nautopilot: true\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
         );
-        fs::write(&path, content).unwrap();
+        crate::crank_io::write_string(&path, content).unwrap();
         path
     }
 
@@ -170,7 +169,7 @@ mod tests {
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
         let issues = crate::crank_io::repo_crank_dir(git_root);
-        fs::create_dir_all(&issues).unwrap();
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(
             &issues,
@@ -201,12 +200,12 @@ mod tests {
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
         let issues = crate::crank_io::repo_crank_dir(git_root);
-        fs::create_dir_all(&issues).unwrap();
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         let other = issues.join("b222.md");
         let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\nautopilot: true\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
-        fs::write(&other, content).unwrap();
+        crate::crank_io::write_string(&other, content).unwrap();
 
         let claimed =
             claim_next_task_with_lock_dir(git_root, repo_root, Some("crank"), Some(&lock_dir))
@@ -222,7 +221,7 @@ mod tests {
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
         let issues = crate::crank_io::repo_crank_dir(git_root);
-        fs::create_dir_all(&issues).unwrap();
+        crate::crank_io::ensure_dir(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         write_task(&issues, "b222", 3, "open", "2024-12-29", "");
