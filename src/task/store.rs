@@ -54,6 +54,7 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         .with_context(|| format!("failed to read task file: {}", path.display()))?;
 
     let (frontmatter, title_fallback) = parse_frontmatter(&content)?;
+    let body_run = extract_run_command(&content);
     let id = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -77,7 +78,9 @@ pub fn parse_task(path: &Path) -> Result<Task> {
             .workflow
             .filter(|value| !value.trim().is_empty()),
         step_id: frontmatter.step_id.filter(|value| !value.trim().is_empty()),
-        run: frontmatter.run.filter(|value| !value.trim().is_empty()),
+        run: body_run
+            .or(frontmatter.run)
+            .filter(|value| !value.trim().is_empty()),
         coding_agent: frontmatter
             .coding_agent
             .unwrap_or_else(|| "opencode".to_string()),
@@ -123,6 +126,41 @@ fn parse_frontmatter(content: &str) -> Result<(TaskFrontmatter, Option<String>)>
     let frontmatter = frontmatter_lines.join("\n");
     let parsed: TaskFrontmatter = serde_yaml::from_str(&frontmatter)?;
     Ok((parsed, title_fallback))
+}
+
+fn extract_run_command(content: &str) -> Option<String> {
+    let mut in_run_section = false;
+    let mut in_code_block = false;
+    let mut lines = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "### Run" {
+            in_run_section = true;
+            continue;
+        }
+
+        if in_run_section {
+            if trimmed.starts_with("```") {
+                if in_code_block {
+                    break;
+                } else {
+                    in_code_block = true;
+                    continue;
+                }
+            }
+
+            if in_code_block {
+                lines.push(line);
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n").trim().to_string())
+    }
 }
 
 pub fn task_template(
@@ -554,11 +592,17 @@ priority: 3
 status: open
 workflow: review-flow
 step_id: implement
-run: crank merge
 created: 2024-12-30
 ---
 
 ## Intent
+
+## Spec
+
+### Run
+```bash
+crank merge
+```
 "#;
         fs::write(&path, content).unwrap();
 

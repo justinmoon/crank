@@ -2,27 +2,14 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use clap::{Args, Subcommand};
-use serde::Deserialize;
+use clap::Args;
+use serde::{Deserialize, Serialize};
 
 use crate::task::model::Dependency;
 use crate::task::store;
-use crate::task::{git as task_git, model};
-
-#[derive(Subcommand, Clone)]
-pub enum WorkflowCommand {
-    /// List available workflow templates
-    List,
-
-    /// Apply a workflow template and create tasks
-    Apply(WorkflowApplyArgs),
-
-    /// Run a workflow instance by ID
-    Run(WorkflowRunArgs),
-}
 
 #[derive(Args, Clone)]
-pub struct WorkflowApplyArgs {
+pub struct BuildArgs {
     /// Template name
     #[arg(value_name = "template")]
     pub template: String,
@@ -42,17 +29,6 @@ pub struct WorkflowApplyArgs {
     /// Overwrite existing task files
     #[arg(long)]
     pub force: bool,
-}
-
-#[derive(Args, Clone)]
-pub struct WorkflowRunArgs {
-    /// Workflow instance ID
-    #[arg(value_name = "workflow-id")]
-    pub id: String,
-
-    /// Max number of steps to run in parallel
-    #[arg(long, default_value = "2")]
-    pub concurrency: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,68 +53,7 @@ struct WorkflowStep {
     needs: Option<Vec<String>>,
 }
 
-pub async fn run_command(cmd: WorkflowCommand) -> Result<()> {
-    match cmd {
-        WorkflowCommand::List => list_templates(),
-        WorkflowCommand::Apply(args) => {
-            let git_root = task_git::git_root()?;
-            apply_template_at(&git_root, &args)
-        }
-        WorkflowCommand::Run(args) => {
-            let git_root = task_git::git_root()?;
-            run_workflow_at(&git_root, &args.id, args.concurrency).await
-        }
-    }
-}
-
-fn list_templates() -> Result<()> {
-    let git_root = task_git::git_root()?;
-    let mut templates = Vec::new();
-
-    let repo_dir = repo_templates_dir(&git_root);
-    if repo_dir.exists() {
-        templates.extend(read_template_names(&repo_dir)?);
-    }
-
-    if let Some(home_dir) = user_templates_dir() {
-        if home_dir.exists() {
-            templates.extend(read_template_names(&home_dir)?);
-        }
-    }
-
-    templates.sort();
-    templates.dedup();
-
-    if templates.is_empty() {
-        println!("No workflow templates found");
-        return Ok(());
-    }
-
-    for template in templates {
-        println!("{template}");
-    }
-
-    Ok(())
-}
-
-fn read_template_names(dir: &Path) -> Result<Vec<String>> {
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if let Some(stripped) = name.strip_suffix(".workflow.toml") {
-                names.push(stripped.to_string());
-            }
-        }
-    }
-    Ok(names)
-}
-
-pub fn apply_template_at(git_root: &Path, args: &WorkflowApplyArgs) -> Result<()> {
+pub fn build_template_at(git_root: &Path, args: &BuildArgs) -> Result<()> {
     let template = load_template(git_root, &args.template)?;
     validate_template(&template, &args.template)?;
 
@@ -160,6 +75,8 @@ pub fn apply_template_at(git_root: &Path, args: &WorkflowApplyArgs) -> Result<()
     if args.ephemeral {
         let pattern = format!(".crank/{workflow_id}.*.md");
         store::ensure_git_exclude(git_root, &pattern)?;
+        let manifest_pattern = format!(".crank/workflows/{workflow_id}.manifest.toml");
+        store::ensure_git_exclude(git_root, &manifest_pattern)?;
     }
 
     for step in &template.steps {
@@ -182,6 +99,8 @@ pub fn apply_template_at(git_root: &Path, args: &WorkflowApplyArgs) -> Result<()
         store::write_task_file(&task_path, &content)?;
     }
 
+    write_manifest_at(git_root, &workflow_id, &template.steps)?;
+
     println!(
         "Applied workflow '{}' as '{}'",
         template.workflow, workflow_id
@@ -203,8 +122,6 @@ fn build_task_content(
     } else {
         format!("title: {}", yaml_quote(title))
     };
-    let run_line = run.map(|value| format!("run: {}", yaml_quote(value)));
-
     let mut deps_section = String::new();
     if !deps.is_empty() {
         deps_section.push_str("depends_on:\n");
@@ -227,10 +144,6 @@ fn build_task_content(
         format!("step_id: {}", yaml_quote(step_id)),
     ];
 
-    if let Some(run_line) = run_line {
-        frontmatter_lines.push(run_line);
-    }
-
     frontmatter_lines.push(format!("created: {created}"));
 
     let mut frontmatter = frontmatter_lines.join("\n");
@@ -242,7 +155,9 @@ fn build_task_content(
 
     frontmatter.push_str("---\n\n## Intent\n\n## Spec\n");
     if let Some(run) = run {
-        frontmatter.push_str(&format!("\n- Run: {run}\n"));
+        frontmatter.push_str("\n### Run\n```bash\n");
+        frontmatter.push_str(run);
+        frontmatter.push_str("\n```\n\n### Acceptable Output\n- Describe what success looks like.\n");
     } else {
         frontmatter.push('\n');
     }
@@ -347,6 +262,52 @@ fn user_templates_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|dir| dir.join(".crank").join("workflows"))
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WorkflowManifest {
+    pub workflow: String,
+    pub steps: Vec<String>,
+}
+
+fn manifest_path(git_root: &Path, workflow_id: &str) -> PathBuf {
+    repo_templates_dir(git_root).join(format!("{workflow_id}.manifest.toml"))
+}
+
+fn write_manifest_at(
+    git_root: &Path,
+    workflow_id: &str,
+    steps: &[WorkflowStep],
+) -> Result<()> {
+    let manifest = WorkflowManifest {
+        workflow: workflow_id.to_string(),
+        steps: steps.iter().map(|step| step.id.clone()).collect(),
+    };
+    let path = manifest_path(git_root, workflow_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create workflow manifest directory: {}",
+                parent.display()
+            )
+        })?;
+    }
+    let content = toml::to_string_pretty(&manifest)?;
+    std::fs::write(&path, content)
+        .with_context(|| format!("failed to write workflow manifest: {}", path.display()))?;
+    Ok(())
+}
+
+pub fn load_manifest(git_root: &Path, workflow_id: &str) -> Result<Option<WorkflowManifest>> {
+    let path = manifest_path(git_root, workflow_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read workflow manifest: {}", path.display()))?;
+    let manifest: WorkflowManifest = toml::from_str(&content)
+        .with_context(|| format!("failed to parse workflow manifest: {}", path.display()))?;
+    Ok(Some(manifest))
+}
+
 fn validate_template(template: &WorkflowTemplate, expected_name: &str) -> Result<()> {
     if template.workflow != expected_name {
         return Err(anyhow!(
@@ -407,170 +368,4 @@ fn validate_workflow_id(id: &str) -> Result<()> {
         return Err(anyhow!("workflow id cannot contain whitespace"));
     }
     Ok(())
-}
-
-pub async fn run_workflow_at(git_root: &Path, id: &str, concurrency: usize) -> Result<()> {
-    if concurrency == 0 {
-        return Err(anyhow!("concurrency must be >= 1"));
-    }
-
-    loop {
-        let tasks = store::load_tasks(git_root)?;
-        let workflow_tasks: Vec<model::Task> = tasks
-            .iter()
-            .filter(|task| task.workflow.as_deref() == Some(id))
-            .cloned()
-            .collect();
-
-        if workflow_tasks.is_empty() {
-            return Err(anyhow!("no tasks found for workflow: {id}"));
-        }
-
-        let runnable: Vec<model::Task> = workflow_tasks
-            .iter()
-            .filter(|task| !task.is_closed())
-            .filter(|task| {
-                task.run
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|run| !run.is_empty())
-                    .is_some()
-            })
-            .filter(|task| task.blockers(&tasks).is_empty())
-            .cloned()
-            .collect();
-
-        let manual_pending: Vec<model::Task> = workflow_tasks
-            .iter()
-            .filter(|task| !task.is_closed())
-            .filter(|task| task.run.as_deref().map(str::trim).unwrap_or("").is_empty())
-            .cloned()
-            .collect();
-
-        let blocked: Vec<(String, Vec<String>)> = workflow_tasks
-            .iter()
-            .filter(|task| !task.is_closed())
-            .filter(|task| {
-                task.run
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|run| !run.is_empty())
-                    .is_some()
-            })
-            .filter_map(|task| {
-                let blockers: Vec<String> = task
-                    .blockers(&tasks)
-                    .iter()
-                    .map(|blocker| blocker.id.clone())
-                    .collect();
-                if blockers.is_empty() {
-                    None
-                } else {
-                    Some((task.id.clone(), blockers))
-                }
-            })
-            .collect();
-
-        if runnable.is_empty() {
-            if manual_pending.is_empty() {
-                if !blocked.is_empty() {
-                    let details = blocked
-                        .iter()
-                        .map(|(task_id, blockers)| {
-                            format!("{task_id} blocked by {}", blockers.join(", "))
-                        })
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    return Err(anyhow!(
-                        "workflow '{id}' has blocked steps with no runnable tasks: {details}"
-                    ));
-                }
-
-                println!("Workflow '{id}' complete");
-                return Ok(());
-            }
-
-            let waiting: Vec<String> = manual_pending.iter().map(|task| task.id.clone()).collect();
-            println!(
-                "Workflow '{id}' waiting on manual steps: {}",
-                waiting.join(", ")
-            );
-            return Ok(());
-        }
-
-        let mut join_set = tokio::task::JoinSet::new();
-        for task in runnable.into_iter().take(concurrency) {
-            store::update_task_status(&task.path, model::TASK_STATUS_IN_PROGRESS)?;
-            let workdir = git_root.to_path_buf();
-            let run = task.run.clone().unwrap_or_else(|| "".to_string());
-            join_set.spawn(async move { run_step(workdir, task, run).await });
-        }
-
-        let mut failures = Vec::new();
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok(outcome) => {
-                    let path = task_git::task_path_for_id(git_root, &outcome.id);
-                    match outcome.result {
-                        Ok(()) => {
-                            store::update_task_status(&path, model::TASK_STATUS_CLOSED)?;
-                        }
-                        Err(err) => {
-                            store::update_task_status(&path, model::TASK_STATUS_OPEN)?;
-                            failures.push(err);
-                        }
-                    }
-                }
-                Err(err) => {
-                    failures.push(anyhow!("task execution failed: {err}"));
-                }
-            }
-        }
-
-        if !failures.is_empty() {
-            let mut message = String::from("workflow step failed");
-            for failure in failures {
-                message.push_str(&format!("\n- {failure}"));
-            }
-            return Err(anyhow!(message));
-        }
-    }
-}
-
-struct StepOutcome {
-    id: String,
-    result: Result<()>,
-}
-
-async fn run_step(workdir: PathBuf, task: model::Task, cmd: String) -> StepOutcome {
-    let id = task.id.clone();
-    let trimmed = cmd.trim();
-    if trimmed.is_empty() {
-        return StepOutcome {
-            id,
-            result: Err(anyhow!("step '{}' has empty run command", task.id)),
-        };
-    }
-
-    let status = tokio::process::Command::new("bash")
-        .arg("-lc")
-        .arg(trimmed)
-        .current_dir(&workdir)
-        .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit())
-        .status()
-        .await
-        .with_context(|| format!("failed to run step '{}'", task.id));
-
-    let result = match status {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(anyhow!(
-            "step '{}' failed with status {}",
-            task.id,
-            status.code().unwrap_or(1)
-        )),
-        Err(err) => Err(err),
-    };
-
-    StepOutcome { id, result }
 }

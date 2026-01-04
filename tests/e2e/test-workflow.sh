@@ -1,5 +1,5 @@
 #!/bin/bash
-# E2E tests for crank workflow command
+# E2E tests for crank build/run workflow command
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -18,6 +18,7 @@ if [[ ! -x "$CRANK_BIN" ]]; then
 fi
 
 export PATH="$(dirname "$CRANK_BIN"):$PATH"
+export CRANK_RUN_NO_AGENT=1
 
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
@@ -72,30 +73,45 @@ workflow_basic() {
     write_template "test" "workflow = \"test\"\nversion = 1\n\n[vars]\nlog = { required = true }\n\n[[steps]]\nid = \"preflight\"\ntitle = \"Preflight\"\nrun = \"echo preflight >> {{log}}\"\n\n[[steps]]\nid = \"step-a\"\ntitle = \"Step A\"\nrun = \"sleep 1; echo step-a >> {{log}}\"\nneeds = [\"preflight\"]\n\n[[steps]]\nid = \"step-b\"\ntitle = \"Step B\"\nrun = \"sleep 1; echo step-b >> {{log}}\"\nneeds = [\"preflight\"]\n\n[[steps]]\nid = \"join\"\ntitle = \"Join\"\nrun = \"echo join >> {{log}}\"\nneeds = [\"step-a\", \"step-b\"]\n"
 
     local output
-    if output=$("$CRANK_BIN" workflow apply test --id wf-basic --var log="$log" 2>&1); then
+    if output=$("$CRANK_BIN" build test --id wf-basic --var log="$log" 2>&1); then
         if [[ -f ".crank/wf-basic.preflight.md" ]] && [[ -f ".crank/wf-basic.join.md" ]]; then
             pass "Workflow tasks created"
         else
             fail "Workflow tasks not created"
         fi
     else
-        fail "workflow apply failed"
+        fail "build failed"
         echo "  Output: $output"
         return
     fi
 
-    if "$CRANK_BIN" workflow run wf-basic --concurrency 2 >/dev/null 2>&1; then
-        local first
-        local last
-        first=$(head -n 1 "$log" | tr -d '\r')
-        last=$(tail -n 1 "$log" | tr -d '\r')
-        if [[ "$first" == "preflight" ]] && [[ "$last" == "join" ]]; then
-            pass "Workflow ran in dependency order"
-        else
-            fail "Workflow order incorrect"
+    local output
+    local done=false
+    for _ in {1..10}; do
+        output=$("$CRANK_BIN" run --workflow wf-basic 2>&1) || {
+            fail "run failed"
+            echo "  Output: $output"
+            return
+        }
+        if echo "$output" | grep -q "Workflow 'wf-basic' complete"; then
+            done=true
+            break
         fi
+    done
+
+    if [[ "$done" != "true" ]]; then
+        fail "Workflow did not complete"
+        return
+    fi
+
+    local first
+    local last
+    first=$(head -n 1 "$log" | tr -d '\r')
+    last=$(tail -n 1 "$log" | tr -d '\r')
+    if [[ "$first" == "preflight" ]] && [[ "$last" == "join" ]]; then
+        pass "Workflow ran in dependency order"
     else
-        fail "workflow run failed"
+        fail "Workflow order incorrect"
     fi
     echo ""
 }
@@ -112,13 +128,13 @@ workflow_gate() {
     write_template "gate" "workflow = \"gate\"\nversion = 1\n\n[vars]\nlog = { required = true }\n\n[[steps]]\nid = \"gate\"\ntitle = \"Wait for approval\"\n\n[[steps]]\nid = \"after\"\ntitle = \"After gate\"\nrun = \"echo after >> {{log}}\"\nneeds = [\"gate\"]\n"
 
     local output
-    if ! output=$("$CRANK_BIN" workflow apply gate --id wf-gate --var log="$log" 2>&1); then
-        fail "workflow apply failed"
+    if ! output=$("$CRANK_BIN" build gate --id wf-gate --var log="$log" 2>&1); then
+        fail "build failed"
         echo "  Output: $output"
         return
     fi
 
-    "$CRANK_BIN" workflow run wf-gate >/dev/null 2>&1
+    "$CRANK_BIN" run --workflow wf-gate >/dev/null 2>&1
 
     local status
     status=$(read_status "wf-gate.after")
@@ -130,7 +146,7 @@ workflow_gate() {
 
     "$CRANK_BIN" task done wf-gate.gate >/dev/null 2>&1
 
-    if "$CRANK_BIN" workflow run wf-gate >/dev/null 2>&1 && grep -q "after" "$log"; then
+    if "$CRANK_BIN" run --workflow wf-gate >/dev/null 2>&1 && grep -q "after" "$log"; then
         pass "Workflow resumes after gate closes"
     else
         fail "Workflow did not resume after gate"
@@ -148,14 +164,14 @@ workflow_failure() {
     write_template "fail" "workflow = \"fail\"\nversion = 1\n\n[[steps]]\nid = \"boom\"\ntitle = \"Boom\"\nrun = \"false\"\n\n[[steps]]\nid = \"after\"\ntitle = \"After\"\nrun = \"echo after\"\nneeds = [\"boom\"]\n"
 
     local output
-    if ! output=$("$CRANK_BIN" workflow apply fail --id wf-fail 2>&1); then
-        fail "workflow apply failed"
+    if ! output=$("$CRANK_BIN" build fail --id wf-fail 2>&1); then
+        fail "build failed"
         echo "  Output: $output"
         return
     fi
 
-    if "$CRANK_BIN" workflow run wf-fail >/dev/null 2>&1; then
-        fail "workflow run should have failed"
+    if "$CRANK_BIN" run --workflow wf-fail >/dev/null 2>&1; then
+        fail "run should have failed"
         return
     fi
 

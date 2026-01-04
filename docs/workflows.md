@@ -6,7 +6,7 @@ Workflows are just graphs of tasks. A workflow template defines steps and depend
 
 - Template = blueprint (steps + needs)
 - Instance = concrete run (tasks + status)
-- Execution = run all ready steps, in parallel where possible
+- Execution = run steps in template order, one at a time
 
 A step is a task. Dependencies are `depends_on` entries with `type: blocks`.
 
@@ -29,37 +29,38 @@ base = { default = "master" }
 [[steps]]
 id = "preflight"
 title = "Preflight checks"
-run = "crank merge-step preflight --base {{base}}"
+run = "scripts/merge/preflight.sh --base {{base}}"
 
 [[steps]]
 id = "review"
 title = "Run review"
-run = "crank merge-step review"
+run = "scripts/merge/review.sh"
 needs = ["preflight"]
 ```
 
 ## Commands (what an agent needs)
 
-- List templates: `crank workflow list`
-- Apply template: `crank workflow apply <template> --id <workflow-id> --var key=val`
-- Run workflow: `crank workflow run <workflow-id> [--concurrency N]`
+- Build a workflow: `crank build <template> --id <workflow-id> --var key=val`
+- Run next step: `crank run`
+- Run a workflow: `crank run --workflow <workflow-id>`
 
 Apply creates tasks in `.crank/` like:
 - `workflow: <workflow-id>`
 - `step_id: <step-id>`
-- `run: <command>` (if provided)
+- `### Run` section in the body (if provided)
 - `depends_on` based on `needs`
 
 ## How execution works
 
 - The runner loads tasks with `workflow: <id>`.
-- A step is runnable if it is open, has a `run` command, and has no blocking deps.
-- Runnable steps execute concurrently (bounded by `--concurrency`).
-- Steps with no `run` are manual gates. The runner stops and prints them as "waiting".
+- A step is runnable if it is open and has no blocking deps.
+- Steps execute in the template's order (manifest-backed), one at a time.
+- Steps with no `### Run` are agent-driven (manual gates).
 
 ## Merge workflow
 
-`crank merge` now instantiates and runs the `merge` workflow template. It is the only supported path for merging.
+`merge.workflow.toml` is a repo-level template wired to `scripts/merge/*.sh` steps.
+Build it with `crank build merge --id <workflow-id>` and run with `crank run --workflow <id>`.
 
 Key steps (in order):
 - `preflight`: clean tree, ahead of base

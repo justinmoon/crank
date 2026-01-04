@@ -5,7 +5,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::autopilot::markers;
 
-const NUDGE_MESSAGE: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run crank merge until it passes.";
+const NUDGE_MESSAGE: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
 
 pub fn ask_for_help(repo_root: &Path, message: &str) -> Result<PathBuf> {
     let trimmed = message.trim();

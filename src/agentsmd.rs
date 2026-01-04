@@ -3,10 +3,10 @@ pub fn print_agentsmd() {
         r#"# CRANK.AGENTS.MD
 
 Tool: project ticketing + agent orchestration. Replace side systems.
-Think: single source of truth. Task -> worktree -> agent -> merge. Keep all tickets here.
+Think: single source of truth. Task -> worktree -> agent -> workflow. Keep all tickets here.
 Two tools in one:
 - Ticketing: crank task (create/next/claim/done/dep)
-- Orchestration: crank tmux/worker/nudge/pause/ask-for-help/status/attach/merge/review
+- Orchestration: crank tmux/worker/nudge/pause/ask-for-help/build/run/review
 
 ## Commands
 - crank agents.md (this doc)
@@ -18,9 +18,8 @@ Two tools in one:
 - crank nudge --pane $TMUX_PANE
 - crank pause [--clear]
 - crank ask-for-help "msg"
-- crank status [-w] [-f <id>]
-- crank attach <id>
-- crank merge [--dry-run] [--notify]
+- crank build <template> --id <workflow-id> --var key=val
+- crank run [--workflow <workflow-id>] [<task-id>]
 - crank review [--skip-tests]
 "#,
     );
