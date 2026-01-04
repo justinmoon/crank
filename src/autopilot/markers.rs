@@ -43,6 +43,12 @@ pub fn clear_task_markers(task_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn write_merged_marker(task_id: &str) -> Result<PathBuf> {
+    let path = merged_marker_path(task_id)?;
+    write_marker(&path, "merged")?;
+    Ok(path)
+}
+
 pub fn merged_marker_exists(task_id: &str) -> Result<bool> {
     Ok(merged_marker_path(task_id)?.exists())
 }

@@ -24,9 +24,10 @@ Two tools in one:
 - crank tmux -c N [--project <name>]
 - crank nudge --pane $TMUX_PANE
 - crank pause [--clear]
+- crank done [--task <id>]
 - crank ask-for-help "msg"
 - crank build <template> --id <workflow-id> --var key=val
-- crank run [--workflow <workflow-id>] [<task-id>]
+- crank run [--workflow <workflow-id>] [--loop] [<task-id>]
 - crank review [--skip-tests]
 "#,
     );

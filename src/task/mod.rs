@@ -11,4 +11,4 @@ pub(crate) mod store;
 mod tui;
 mod workflow;
 
-pub use claim::claim_next_task;
+pub use claim::{claim_next_task, clear_active_claim};

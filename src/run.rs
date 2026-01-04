@@ -18,6 +18,10 @@ pub struct RunArgs {
     /// Force workflow scope
     #[arg(long, conflicts_with = "task_id")]
     pub workflow: Option<String>,
+
+    /// Keep running workflow steps until waiting or complete
+    #[arg(long = "loop", requires = "workflow")]
+    pub loop_: bool,
 }
 
 pub fn run_command(args: RunArgs) -> Result<()> {
@@ -36,6 +40,9 @@ pub fn run_command(args: RunArgs) -> Result<()> {
     }
 
     if let Some(workflow_id) = args.workflow {
+        if args.loop_ {
+            return run_workflow_loop(&git_root, &workflow_id);
+        }
         let current = current_task_for_workflow(&git_root, &tasks, &workflow_id);
         return match run_next_workflow_step(&git_root, &tasks, &workflow_id, current.as_ref())? {
             WorkflowRunResult::Ran => Ok(()),
@@ -110,6 +117,40 @@ enum WorkflowRunResult {
     Ran,
     Waiting(String),
     Complete,
+}
+
+fn run_workflow_loop(git_root: &Path, workflow_id: &str) -> Result<()> {
+    loop {
+        let tasks = store::load_tasks(git_root)?;
+        let current = current_task_for_workflow(git_root, &tasks, workflow_id);
+        match run_next_workflow_step(git_root, &tasks, workflow_id, current.as_ref())? {
+            WorkflowRunResult::Ran => {
+                if let Some(current_id) = read_current_task_id(git_root) {
+                    let refreshed = store::load_tasks(git_root)?;
+                    if let Some(task) = refreshed
+                        .iter()
+                        .find(|task| task::ids_match(&task.id, &current_id))
+                    {
+                        if !task.is_closed() {
+                            println!(
+                                "Workflow '{workflow_id}' paused on step '{}' (status {})",
+                                task.id, task.status
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            WorkflowRunResult::Waiting(message) => {
+                println!("{message}");
+                return Ok(());
+            }
+            WorkflowRunResult::Complete => {
+                println!("Workflow '{workflow_id}' complete");
+                return Ok(());
+            }
+        }
+    }
 }
 
 fn run_next_workflow_step(
@@ -215,6 +256,7 @@ fn current_task_for_workflow(git_root: &Path, tasks: &[Task], workflow_id: &str)
         .find(|task| {
             task.workflow.as_deref() == Some(workflow_id) && task::ids_match(&task.id, &current_id)
         })
+        .filter(|task| !task.is_closed())
         .cloned()
 }
 
