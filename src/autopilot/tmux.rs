@@ -2,7 +2,7 @@ use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::autopilot::logging;
+use crate::orchestrator::logging;
 use crate::task::git;
 
 pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {

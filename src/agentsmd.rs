@@ -8,6 +8,13 @@ Two tools in one:
 - Ticketing: crank task (create/next/claim/done/dep)
 - Orchestration: crank tmux/worker/nudge/pause/ask-for-help/build/run/review
 
+## Autopilot tutorial
+- Tasks default to `autopilot: true` in frontmatter.
+- Set `autopilot: false` to prevent auto-claiming; those tasks require manual run/claim.
+- If you need user input, run `crank ask-for-help "<msg>"`.
+- The orchestrator will mark the task `needs_human` and release it when help is requested.
+- Once clarified, resume by flipping status back to `open` and re-run/claim.
+
 ## Commands
 - crank agents.md (this doc)
 - crank task create "title" -a app -p 1-5

@@ -299,6 +299,7 @@ mod tests {
             app: "monorepo".to_string(),
             priority: 3,
             status: "open".to_string(),
+            autopilot: true,
             title: format!("Task {id}"),
             depends_on: deps,
             workflow: None,

@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::autopilot::logging;
+use crate::orchestrator::logging;
 use crate::task::model::Task;
 
 const OPENCODE_HOST: &str = "http://127.0.0.1";

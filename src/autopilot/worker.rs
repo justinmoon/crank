@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::autopilot::{controls, logging::Logger, markers, opencode};
+use crate::orchestrator::{controls, logging::Logger, markers, opencode};
 use crate::task::branch;
 use crate::task::claim_next_task;
 use crate::task::git as task_git;
-use crate::task::model::{Task, TASK_STATUS_CLOSED};
+use crate::task::model::{Task, TASK_STATUS_CLOSED, TASK_STATUS_NEEDS_HUMAN};
 use crate::task::store;
 use anyhow::{anyhow, Context, Result};
 
@@ -143,13 +143,20 @@ async fn supervise_task(
         let help_requested = markers::help_marker_exists(&task.id)?;
         let pause_requested = markers::pause_marker_exists(&task.id)?;
 
+        if help_requested {
+            log_and_print(
+                logger,
+                "info",
+                "help requested; marking needs_human and releasing task",
+            )?;
+            mark_task_needs_human(task)?;
+            agent_session.terminate();
+            return Ok(());
+        }
+
         if agent_session.child_exited()? {
             log_and_print(logger, "info", "agent exited; restarting")?;
-            if help_requested {
-                agent_session.replace_child(spawn_shell(worktree_path)?);
-            } else {
-                agent_session.restart_child(task, worktree_path, prompt, tmux_pane)?;
-            }
+            agent_session.restart_child(task, worktree_path, prompt, tmux_pane)?;
         }
 
         if !help_requested && !pause_requested {
@@ -192,6 +199,12 @@ async fn supervise_task(
 fn close_task(task: &Task) -> Result<()> {
     store::update_task_status(&task.path, TASK_STATUS_CLOSED)
         .context("failed to mark task closed")?;
+    Ok(())
+}
+
+fn mark_task_needs_human(task: &Task) -> Result<()> {
+    store::update_task_status(&task.path, TASK_STATUS_NEEDS_HUMAN)
+        .context("failed to mark task needs_human")?;
     Ok(())
 }
 
@@ -318,14 +331,6 @@ fn spawn_claude(task: &Task, worktree_path: &Path, prompt: &str, tmux_pane: &str
         .env("CRANK_TMUX_PANE", tmux_pane)
         .current_dir(worktree_path);
     cmd.spawn().context("failed to launch claude")
-}
-
-fn spawn_shell(worktree_path: &Path) -> Result<Child> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-    Command::new(shell)
-        .current_dir(worktree_path)
-        .spawn()
-        .context("failed to launch shell")
 }
 
 fn terminate_child(child: Option<Child>) {

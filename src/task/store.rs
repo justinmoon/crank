@@ -14,6 +14,7 @@ struct TaskFrontmatter {
     app: Option<String>,
     priority: Option<i32>,
     status: Option<String>,
+    autopilot: Option<bool>,
     title: Option<String>,
     depends_on: Option<Vec<Dependency>>,
     workflow: Option<String>,
@@ -72,6 +73,7 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         app: frontmatter.app.unwrap_or_default(),
         priority: frontmatter.priority.unwrap_or_default(),
         status: frontmatter.status.unwrap_or_default(),
+        autopilot: frontmatter.autopilot.unwrap_or(true),
         title,
         depends_on: frontmatter.depends_on.unwrap_or_default(),
         workflow: frontmatter
@@ -197,7 +199,7 @@ pub fn task_template(
     }
 
     format!(
-        "---\n{app_line}\n{title_line}\n{priority_line}\nstatus: open\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n"
+        "---\n{app_line}\n{title_line}\n{priority_line}\nstatus: open\nautopilot: true\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n"
     )
 }
 
@@ -590,6 +592,7 @@ app: reader-rs
 title: Test Task
 priority: 3
 status: open
+autopilot: true
 workflow: review-flow
 step_id: implement
 created: 2024-12-30
@@ -612,6 +615,7 @@ crank merge
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.priority, 3);
         assert_eq!(task.status, "open");
+        assert!(task.autopilot);
         assert_eq!(task.workflow.as_deref(), Some("review-flow"));
         assert_eq!(task.step_id.as_deref(), Some("implement"));
         assert_eq!(task.run.as_deref(), Some("crank merge"));
@@ -630,6 +634,7 @@ crank merge
 app: reader-rs
 priority: 3
 status: open
+autopilot: true
 created: 2024-12-30
 ---
 
@@ -650,6 +655,7 @@ app: monorepo
 title: Test Task
 priority: 3
 status: closed #33
+autopilot: true
 created: 2024-12-30
 ---
 "#;
@@ -671,6 +677,7 @@ app: monorepo
 title: Test Task
 priority: 3
 status: open
+autopilot: true
 created: 2024-12-30
 ---
 "#;

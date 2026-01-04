@@ -3,7 +3,7 @@ use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::autopilot::markers;
+use crate::orchestrator::markers;
 
 const NUDGE_MESSAGE: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
 
