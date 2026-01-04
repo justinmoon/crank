@@ -90,10 +90,7 @@ pub fn prompt_task_fields(
 }
 
 pub fn prompt_supervision_mode() -> Result<SupervisionMode> {
-    let options = [
-        "supervised (manual selection)",
-        "unsupervised (auto-claim)",
-    ];
+    let options = ["supervised (manual selection)", "unsupervised (auto-claim)"];
     let selection = Select::new()
         .with_prompt("Supervision")
         .items(&options)

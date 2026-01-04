@@ -117,7 +117,8 @@ async fn run_supervised(
             tasks.retain(|task| task.app == project);
         }
         if tasks.is_empty() {
-            ctx.logger.log("debug", "no tasks available; sleeping 10s")?;
+            ctx.logger
+                .log("debug", "no tasks available; sleeping 10s")?;
             tokio::time::sleep(Duration::from_secs(10)).await;
             continue;
         }
@@ -332,6 +333,7 @@ struct AgentSession {
 }
 
 impl AgentSession {
+    #[allow(clippy::too_many_arguments)]
     async fn start(
         task: &Task,
         worktree_path: &Path,
@@ -482,9 +484,8 @@ fn build_prompt(task: &Task, worktree_path: &Path, mode: SupervisionMode) -> Res
             rules.push("- Do not stop until crank done is called.");
         }
     }
-    rules.push(
-        "- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
-    );
+    rules
+        .push("- Commands already run in the task worktree; do not use cd, -C, or absolute paths.");
 
     let mut prompt = format!(
         "Read AGENTS.md and any project CLAUDE.md. Task: TASK.md (copy of .crank/{}.md).\n\nRules:\n{}",

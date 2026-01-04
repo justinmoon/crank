@@ -12,10 +12,10 @@ use crate::task::branch;
 use crate::task::claim;
 use crate::task::creator;
 use crate::task::git;
+use crate::task::model::SupervisionMode;
 use crate::task::model::{
     normalize_task_id, sort_tasks, Task, TASK_STATUS_CLOSED, TASK_STATUS_IN_PROGRESS,
 };
-use crate::task::model::SupervisionMode;
 use crate::task::prompts::{self, BranchMethod};
 use crate::task::store;
 use crate::task::tui;

@@ -14,7 +14,9 @@ pub fn ask_for_help(repo_root: &Path, message: &str) -> Result<PathBuf> {
         .map(|value| value == "unsupervised")
         .unwrap_or(false)
     {
-        return Err(anyhow!("crank ask-for-help is disabled in unsupervised mode"));
+        return Err(anyhow!(
+            "crank ask-for-help is disabled in unsupervised mode"
+        ));
     }
     let trimmed = message.trim();
     if trimmed.is_empty() {

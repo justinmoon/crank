@@ -8,7 +8,9 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -128,7 +130,16 @@ fn show_alerts_popup_for_client(client: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("crank binary path is not valid UTF-8"))?;
 
     let status = Command::new("tmux")
-        .args(["display-popup", "-E", "-c", client, "-w", "70%", "-h", "60%"])
+        .args([
+            "display-popup",
+            "-E",
+            "-c",
+            client,
+            "-w",
+            "70%",
+            "-h",
+            "60%",
+        ])
         .arg(crank_bin)
         .arg("alerts")
         .status()
@@ -166,7 +177,9 @@ pub fn run_alerts_watch() -> Result<()> {
     }
 
     let mut last_seen = latest_alert_timestamp(&load_alerts().unwrap_or_default());
-    let mut last_popup = Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now);
+    let mut last_popup = Instant::now()
+        .checked_sub(Duration::from_secs(5))
+        .unwrap_or_else(Instant::now);
 
     loop {
         let alerts = load_alerts().unwrap_or_default();
@@ -322,7 +335,11 @@ fn run_loop(
             let size = frame.area();
             let layout = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(2), Constraint::Min(1), Constraint::Length(2)])
+                .constraints([
+                    Constraint::Length(2),
+                    Constraint::Min(1),
+                    Constraint::Length(2),
+                ])
                 .split(size);
 
             let header = Paragraph::new("Alerts").style(Style::default().fg(Color::Cyan));
@@ -430,7 +447,11 @@ fn render_list(state: &AlertState) -> List<'static> {
 
     List::new(items)
         .block(Block::default().borders(Borders::ALL))
-        .highlight_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("> ")
 }
 

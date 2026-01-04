@@ -69,12 +69,9 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         .or(title_fallback)
         .unwrap_or_default();
 
-    let supervision = frontmatter.supervision.ok_or_else(|| {
-        anyhow!(
-            "supervision is required in frontmatter: {}",
-            path.display()
-        )
-    })?;
+    let supervision = frontmatter
+        .supervision
+        .ok_or_else(|| anyhow!("supervision is required in frontmatter: {}", path.display()))?;
 
     Ok(Task {
         app: frontmatter.app.unwrap_or_default(),

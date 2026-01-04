@@ -115,17 +115,9 @@ impl TuiState {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct PickerOptions {
     pub require_selection: bool,
-}
-
-impl Default for PickerOptions {
-    fn default() -> Self {
-        Self {
-            require_selection: false,
-        }
-    }
 }
 
 pub fn run_picker(
