@@ -4,10 +4,10 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::orchestrator::{controls, logging::Logger, markers, opencode};
 use crate::task::branch;
-use crate::task::claim_next_task;
 use crate::task::git as task_git;
 use crate::task::model::{Task, TASK_STATUS_CLOSED, TASK_STATUS_NEEDS_HUMAN};
 use crate::task::store;
+use crate::task::{claim_next_task, clear_active_claim};
 use anyhow::{anyhow, Context, Result};
 
 const MAX_BRANCH_LEN: usize = 20;
@@ -28,8 +28,8 @@ pub async fn run_worker(id: u16, project: Option<String>) -> Result<()> {
     }
     let tmux_pane = std::env::var("TMUX_PANE").context("TMUX_PANE is not set")?;
 
-    let git_root = task_git::git_root()?;
     let repo_root = task_git::repo_root()?;
+    let tasks_root = repo_root.clone();
     let project = project.as_deref().map(str::trim).filter(|p| !p.is_empty());
     let logger = Logger::new(&format!("worker-{id}"))?;
     log_and_print(&logger, "info", "worker started")?;
@@ -41,14 +41,14 @@ pub async fn run_worker(id: u16, project: Option<String>) -> Result<()> {
     log_and_print(
         &logger,
         "info",
-        &format!("git root: {}", git_root.display()),
+        &format!("tasks root: {}", tasks_root.display()),
     )?;
 
     let mut backoff = CLAIM_BACKOFF_START;
 
     loop {
         logger.log("debug", "claiming next task")?;
-        let task = claim_next_task(&git_root, &repo_root, project)?;
+        let task = claim_next_task(&tasks_root, &repo_root, project)?;
         let Some(task) = task else {
             logger.log(
                 "debug",
@@ -80,9 +80,10 @@ pub async fn run_worker(id: u16, project: Option<String>) -> Result<()> {
 
         store::write_current_task_marker(&worktree_path, &task.id)
             .context("failed to write current task marker")?;
+        write_task_alias(&task, &worktree_path)?;
         run_direnv_allow(&worktree_path)?;
 
-        let prompt = build_prompt(&task);
+        let prompt = build_prompt(&task, &worktree_path)?;
         let agent = agent_kind(&task)?;
         log_and_print(&logger, "info", &format!("agent: {:?}", agent))?;
 
@@ -91,12 +92,22 @@ pub async fn run_worker(id: u16, project: Option<String>) -> Result<()> {
             &worktree_path,
             &prompt,
             agent,
-            id,
-            &tmux_pane,
-            &logger,
+            &WorkerContext {
+                worker_id: id,
+                tmux_pane: &tmux_pane,
+                logger: &logger,
+                repo_root: &repo_root,
+            },
         )
         .await?;
     }
+}
+
+struct WorkerContext<'a> {
+    worker_id: u16,
+    tmux_pane: &'a str,
+    logger: &'a Logger,
+    repo_root: &'a Path,
 }
 
 async fn supervise_task(
@@ -104,12 +115,10 @@ async fn supervise_task(
     worktree_path: &Path,
     prompt: &str,
     agent: AgentKind,
-    worker_id: u16,
-    tmux_pane: &str,
-    logger: &Logger,
+    ctx: &WorkerContext<'_>,
 ) -> Result<()> {
     log_and_print(
-        logger,
+        ctx.logger,
         "info",
         &format!(
             "supervising task {} in {}",
@@ -122,9 +131,9 @@ async fn supervise_task(
         worktree_path,
         prompt,
         agent,
-        worker_id,
-        tmux_pane,
-        logger,
+        ctx.worker_id,
+        ctx.tmux_pane,
+        ctx.logger,
     )
     .await?;
 
@@ -134,7 +143,8 @@ async fn supervise_task(
 
     loop {
         if markers::merged_marker_exists(&task.id)? {
-            log_and_print(logger, "info", "merged marker found; closing task")?;
+            log_and_print(ctx.logger, "info", "merged marker found; closing task")?;
+            clear_active_claim(ctx.repo_root, &task.id)?;
             close_task(task)?;
             agent_session.terminate();
             return Ok(());
@@ -145,18 +155,19 @@ async fn supervise_task(
 
         if help_requested {
             log_and_print(
-                logger,
+                ctx.logger,
                 "info",
                 "help requested; marking needs_human and releasing task",
             )?;
             mark_task_needs_human(task)?;
+            clear_active_claim(ctx.repo_root, &task.id)?;
             agent_session.terminate();
             return Ok(());
         }
 
         if agent_session.child_exited()? {
-            log_and_print(logger, "info", "agent exited; restarting")?;
-            agent_session.restart_child(task, worktree_path, prompt, tmux_pane)?;
+            log_and_print(ctx.logger, "info", "agent exited; restarting")?;
+            agent_session.restart_child(task, worktree_path, prompt, ctx.tmux_pane)?;
         }
 
         if !help_requested && !pause_requested {
@@ -169,7 +180,7 @@ async fn supervise_task(
                                 && last_opencode_nudge.elapsed() >= OPENCODE_NUDGE_THROTTLE
                             {
                                 last_opencode_nudge = Instant::now();
-                                log_and_print(logger, "info", "opencode idle; nudging")?;
+                                log_and_print(ctx.logger, "info", "opencode idle; nudging")?;
                                 opencode::send_prompt(server, id, prompt).await?;
                             }
                         }
@@ -183,8 +194,8 @@ async fn supervise_task(
                         .unwrap_or_default()
                         >= CODEX_IDLE_NUDGE_AFTER
                     {
-                        log_and_print(logger, "info", "codex idle; nudging")?;
-                        controls::nudge_task(&task.id, tmux_pane)?;
+                        log_and_print(ctx.logger, "info", "codex idle; nudging")?;
+                        controls::nudge_task(&task.id, ctx.tmux_pane)?;
                         start_time = SystemTime::now();
                     }
                 }
@@ -322,6 +333,8 @@ fn spawn_claude(task: &Task, worktree_path: &Path, prompt: &str, tmux_pane: &str
     let mut cmd = Command::new("claude");
     cmd.arg("--plugin-dir")
         .arg(plugin_dir)
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
         .arg(prompt)
         .env("CRANK_TASK_ID", &task.id)
         .env("CRANK_TMUX_PANE", tmux_pane)
@@ -336,11 +349,40 @@ fn terminate_child(child: Option<Child>) {
     }
 }
 
-fn build_prompt(task: &Task) -> String {
-    format!(
-        "Read AGENTS.md and any project CLAUDE.md. Task: .crank/{}.md.\n\nRules:\n- Implement the task.\n- Run tests via just (no npx playwright).\n- Manual QA when relevant (use browser-tools).\n- Commit changes before running the merge workflow; git status must be clean.\n- Run the merge workflow until it succeeds.\n- If blocked, run crank ask-for-help \"<msg>\".\n- Do not stop until the merge workflow succeeds or crank ask-for-help is called.\n- Do not ask questions; make reasonable assumptions and proceed.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
+fn build_prompt(task: &Task, worktree_path: &Path) -> Result<String> {
+    let mut prompt = format!(
+        "Read AGENTS.md and any project CLAUDE.md. Task: TASK.md (copy of .crank/{}.md).\n\nRules:\n- Implement the task.\n- Run tests via just when relevant.\n- If blocked, run crank ask-for-help \"<msg>\".\n- When complete, run crank done to mark the task finished.\n- Do not stop until crank done or crank ask-for-help is called.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
         task.id
-    )
+    );
+
+    let extra_path = worktree_path.join(".crank").join("worker-prompt.txt");
+    if extra_path.exists() {
+        if let Ok(extra) = std::fs::read_to_string(&extra_path) {
+            let trimmed = extra.trim();
+            if !trimmed.is_empty() {
+                prompt.push_str("\n\nRepo instructions:\n");
+                prompt.push_str(trimmed);
+            }
+        }
+    }
+
+    Ok(prompt)
+}
+
+fn write_task_alias(task: &Task, worktree_path: &Path) -> Result<()> {
+    let source = worktree_path.join(".crank").join(format!("{}.md", task.id));
+    if !source.exists() {
+        return Ok(());
+    }
+    let target = worktree_path.join("TASK.md");
+    std::fs::copy(&source, &target)
+        .with_context(|| format!("failed to write task alias at {}", target.display()))?;
+    store::ensure_git_exclude(worktree_path, "TASK.md")?;
+    let task_id_path = worktree_path.join(".crank").join("TASK_ID");
+    std::fs::write(&task_id_path, format!("{}\n", task.id))
+        .with_context(|| format!("failed to write task id at {}", task_id_path.display()))?;
+    store::ensure_git_exclude(worktree_path, ".crank/TASK_ID")?;
+    Ok(())
 }
 
 fn agent_kind(task: &Task) -> Result<AgentKind> {
@@ -364,6 +406,9 @@ fn rename_tmux_window(pane: &str, name: &str) -> Result<()> {
 }
 
 fn run_direnv_allow(worktree_path: &Path) -> Result<()> {
+    if !worktree_path.join(".envrc").exists() {
+        return Ok(());
+    }
     let status = Command::new("direnv")
         .arg("allow")
         .current_dir(worktree_path)

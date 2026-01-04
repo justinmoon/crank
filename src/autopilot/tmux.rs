@@ -23,19 +23,24 @@ pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
         return Err(anyhow!("tmux session already exists: {session}"));
     }
 
-    let project_arg = project
-        .as_deref()
-        .map(|name| format!(" --project {name}"))
-        .unwrap_or_default();
+    let crank_bin = std::env::current_exe().context("failed to resolve crank binary path")?;
+    let crank_bin = crank_bin
+        .to_str()
+        .ok_or_else(|| anyhow!("crank binary path is not valid UTF-8"))?;
 
     for id in 1..=concurrency {
         let window = format!("worker-{id}");
-        let cmd = format!("crank worker --id {id}{project_arg}");
+        let mut worker_args = vec!["worker".to_string(), "--id".to_string(), id.to_string()];
+        if let Some(name) = project.as_deref() {
+            worker_args.push("--project".to_string());
+            worker_args.push(name.to_string());
+        }
         if id == 1 {
             let status = Command::new("tmux")
                 .args(["new-session", "-d", "-s", &session, "-n", &window, "-c"])
                 .arg(&git_root)
-                .arg(&cmd)
+                .arg(crank_bin)
+                .args(&worker_args)
                 .status()
                 .context("failed to create tmux session")?;
             if !status.success() {
@@ -45,7 +50,8 @@ pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
             let status = Command::new("tmux")
                 .args(["new-window", "-t", &session, "-n", &window, "-c"])
                 .arg(&git_root)
-                .arg(&cmd)
+                .arg(crank_bin)
+                .args(&worker_args)
                 .status()
                 .context("failed to create tmux window")?;
             if !status.success() {
