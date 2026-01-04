@@ -201,7 +201,7 @@ fn build_task_content(
     let title_line = if title.trim().is_empty() {
         "title:".to_string()
     } else {
-        format!("title: {title}")
+        format!("title: {}", yaml_quote(title))
     };
     let run_line = run.map(|value| format!("run: {}", yaml_quote(value)));
 
@@ -209,7 +209,11 @@ fn build_task_content(
     if !deps.is_empty() {
         deps_section.push_str("depends_on:\n");
         for dep in deps {
-            deps_section.push_str(&format!("  - id: {}\n    type: {}\n", dep.id, dep.dep_type));
+            deps_section.push_str(&format!(
+                "  - id: {}\n    type: {}\n",
+                yaml_quote(&dep.id),
+                dep.dep_type
+            ));
         }
     }
 
@@ -219,8 +223,8 @@ fn build_task_content(
         title_line,
         "priority: 3".to_string(),
         "status: open".to_string(),
-        format!("workflow: {workflow_id}"),
-        format!("step_id: {step_id}"),
+        format!("workflow: {}", yaml_quote(workflow_id)),
+        format!("step_id: {}", yaml_quote(step_id)),
     ];
 
     if let Some(run_line) = run_line {
@@ -443,8 +447,45 @@ pub async fn run_workflow_at(git_root: &Path, id: &str, concurrency: usize) -> R
             .cloned()
             .collect();
 
+        let blocked: Vec<(String, Vec<String>)> = workflow_tasks
+            .iter()
+            .filter(|task| !task.is_closed())
+            .filter(|task| {
+                task.run
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|run| !run.is_empty())
+                    .is_some()
+            })
+            .filter_map(|task| {
+                let blockers: Vec<String> = task
+                    .blockers(&tasks)
+                    .iter()
+                    .map(|blocker| blocker.id.clone())
+                    .collect();
+                if blockers.is_empty() {
+                    None
+                } else {
+                    Some((task.id.clone(), blockers))
+                }
+            })
+            .collect();
+
         if runnable.is_empty() {
             if manual_pending.is_empty() {
+                if !blocked.is_empty() {
+                    let details = blocked
+                        .iter()
+                        .map(|(task_id, blockers)| {
+                            format!("{task_id} blocked by {}", blockers.join(", "))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    return Err(anyhow!(
+                        "workflow '{id}' has blocked steps with no runnable tasks: {details}"
+                    ));
+                }
+
                 println!("Workflow '{id}' complete");
                 return Ok(());
             }
