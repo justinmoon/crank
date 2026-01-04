@@ -117,9 +117,16 @@ async fn supervise_task(
             worktree_path.display()
         ),
     )?;
-    let mut agent_session =
-        AgentSession::start(task, worktree_path, prompt, agent, worker_id, tmux_pane, logger)
-            .await?;
+    let mut agent_session = AgentSession::start(
+        task,
+        worktree_path,
+        prompt,
+        agent,
+        worker_id,
+        tmux_pane,
+        logger,
+    )
+    .await?;
 
     let mut last_status_check = Instant::now();
     let mut last_opencode_nudge = Instant::now();
