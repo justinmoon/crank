@@ -8,7 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 worktree="."
 timeout_ms="600000"
 skip="false"
-skip_tests="false"
+# Default to skipping tests: pre-merge already runs them via `just pre-merge`.
+skip_tests="true"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
