@@ -5,4 +5,5 @@
 - Use:
   - `crank build merge --id merge-<branch>-<sha> --var worktree=/path/to/worktree --ephemeral`
   - `crank run --workflow merge-<branch>-<sha>` (repeat until complete)
+- If `pre-merge` or `review` fails, fix the issue and rerun the workflow; `scripts/merge/review.sh` prints the review failure details.
 - If unsure: ask, do not merge manually

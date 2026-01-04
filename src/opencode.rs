@@ -38,6 +38,7 @@ Optional: add context as bullets after the first line."#;
 pub struct ReviewResult {
     pub status: String,
     pub reason: Option<String>,
+    pub details: Option<String>,
 }
 
 /// Send a prompt using the opencode CLI with the review agent.
@@ -194,13 +195,28 @@ fn parse_review_output(output: &str) -> ReviewResult {
         return parsed;
     }
 
-    let first_line = output.lines().next().unwrap_or("").trim();
+    let mut lines = output.lines();
+    let first_line = lines.next().unwrap_or("").trim();
+    let rest = lines.collect::<Vec<_>>().join("\n");
+    let rest_trimmed = rest.trim();
+    let rest_details = if rest_trimmed.is_empty() {
+        None
+    } else {
+        Some(rest_trimmed.to_string())
+    };
+    let full_trimmed = output.trim();
+    let full_details = if full_trimmed.is_empty() {
+        None
+    } else {
+        Some(full_trimmed.to_string())
+    };
     let first_line_upper = first_line.to_ascii_uppercase();
 
     if first_line_upper == "PASS" || first_line_upper.starts_with("PASS") {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
+            details: rest_details,
         };
     }
 
@@ -213,6 +229,7 @@ fn parse_review_output(output: &str) -> ReviewResult {
         return ReviewResult {
             status: "fail".to_string(),
             reason: Some(reason.to_string()),
+            details: rest_details,
         };
     }
 
@@ -223,6 +240,7 @@ fn parse_review_output(output: &str) -> ReviewResult {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
+            details: full_details.clone(),
         };
     }
 
@@ -232,12 +250,14 @@ fn parse_review_output(output: &str) -> ReviewResult {
         return ReviewResult {
             status: "fail".to_string(),
             reason: Some(reason.to_string()),
+            details: full_details.clone(),
         };
     }
 
     ReviewResult {
         status: "fail".to_string(),
         reason: Some("Could not parse review output".to_string()),
+        details: full_details,
     }
 }
 
@@ -262,10 +282,16 @@ fn parse_review_json(output: &str) -> Option<ReviewResult> {
             continue;
         };
         let status = status_value.trim().to_ascii_lowercase();
+        let details = json
+            .get("details")
+            .and_then(|value| value.as_str())
+            .or_else(|| json.get("output").and_then(|value| value.as_str()))
+            .map(|value| value.to_string());
         if status == "pass" {
             return Some(ReviewResult {
                 status: "pass".to_string(),
                 reason: None,
+                details,
             });
         }
         if status == "fail" {
@@ -277,6 +303,7 @@ fn parse_review_json(output: &str) -> Option<ReviewResult> {
             return Some(ReviewResult {
                 status: "fail".to_string(),
                 reason: Some(reason.to_string()),
+                details,
             });
         }
     }
@@ -309,9 +336,21 @@ pub async fn run_review(
     match result {
         Ok(response) => {
             let review = parse_review_output(&response);
-            ReviewStepResult::new("review", &review.status, review.reason, Some(duration_ms))
+            ReviewStepResult::new(
+                "review",
+                &review.status,
+                review.reason,
+                review.details,
+                Some(duration_ms),
+            )
         }
-        Err(e) => ReviewStepResult::new("review", "fail", Some(e.to_string()), Some(duration_ms)),
+        Err(e) => ReviewStepResult::new(
+            "review",
+            "fail",
+            Some(e.to_string()),
+            None,
+            Some(duration_ms),
+        ),
     }
 }
 
@@ -328,6 +367,7 @@ pub async fn review_command(worktree: &str, skip_tests: bool, timeout_ms: u64) -
         serde_json::json!({
             "status": result.status,
             "reason": result.tail,
+            "details": result.details,
         })
     );
 

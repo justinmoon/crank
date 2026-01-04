@@ -89,10 +89,28 @@ import sys
 raw = os.environ.get("CRANK_REVIEW_OUTPUT", "")
 exit_code = int(os.environ.get("CRANK_REVIEW_EXIT", "1") or "1")
 
+def trim_details(value, limit=2000):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) > limit:
+        return text[:limit].rstrip() + "\n...(truncated)"
+    return text
+
+def emit_fail(message, details=None):
+    print(f"FAIL: {message[:200]}")
+    details_text = trim_details(details)
+    if details_text:
+        print(details_text)
+    sys.exit(1)
+
 # Prefer parsing `crank review` JSON output:
 #   {"status":"pass"|"fail","reason":<string|null>}
 parsed_status = None
 reason = None
+details = None
 for line in raw.splitlines():
     line = line.strip()
     if not line:
@@ -105,6 +123,7 @@ for line in raw.splitlines():
     if isinstance(obj, dict) and "status" in obj:
         parsed_status = obj.get("status")
         reason = obj.get("reason")
+        details = obj.get("details") or obj.get("output")
 
 if isinstance(parsed_status, str):
     status_norm = parsed_status.strip().lower()
@@ -114,8 +133,7 @@ if isinstance(parsed_status, str):
     if status_norm == "fail":
         msg = (reason or "review failed")
         msg = msg.strip() if isinstance(msg, str) else "review failed"
-        print(f"FAIL: {msg[:200]}")
-        sys.exit(1)
+        emit_fail(msg, details)
 
 # Fallback: treat output as plain text and scan.
 text = raw.strip()
@@ -129,8 +147,8 @@ if exit_code == 0 and (first_line_norm == "PASS" or first_line_norm.startswith("
 m = re.match(r"^FAIL:\s*(.*)$", first_line_norm)
 if m:
     msg = (m.group(1) or "review failed").strip()
-    print(f"FAIL: {msg[:200]}")
-    sys.exit(1)
+    tail = "\n".join(text.splitlines()[1:]).strip()
+    emit_fail(msg, tail)
 
 if exit_code == 0 and re.search(r"\bPASS\b", text, flags=re.IGNORECASE):
     print("PASS")
@@ -139,13 +157,10 @@ if exit_code == 0 and re.search(r"\bPASS\b", text, flags=re.IGNORECASE):
 m2 = re.search(r"FAIL:\s*([^\n\r]{0,200})", text)
 if m2:
     msg = (m2.group(1) or "review failed").strip()
-    print(f"FAIL: {msg[:200]}")
-    sys.exit(1)
+    emit_fail(msg, text)
 
 if exit_code != 0:
-    print("FAIL: review command failed")
-    sys.exit(1)
+    emit_fail("review command failed", text)
 
-print("FAIL: Could not parse review output")
-sys.exit(1)
+emit_fail("Could not parse review output", text)
 PY
