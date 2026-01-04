@@ -117,9 +117,16 @@ async fn supervise_task(
             worktree_path.display()
         ),
     )?;
-    let mut agent_session =
-        AgentSession::start(task, worktree_path, prompt, agent, worker_id, tmux_pane, logger)
-            .await?;
+    let mut agent_session = AgentSession::start(
+        task,
+        worktree_path,
+        prompt,
+        agent,
+        worker_id,
+        tmux_pane,
+        logger,
+    )
+    .await?;
 
     let mut last_status_check = Instant::now();
     let mut last_opencode_nudge = Instant::now();
@@ -330,7 +337,7 @@ fn terminate_child(child: Option<Child>) {
 
 fn build_prompt(task: &Task) -> String {
     format!(
-        "Read AGENTS.md and any project CLAUDE.md. Task: .issues/{}.md.\n\nRules:\n- Implement the task.\n- Run tests via just (no npx playwright).\n- Manual QA when relevant (use browser-tools).\n- Commit changes before running crank merge; git status must be clean.\n- Run crank merge until it succeeds.\n- If blocked, run crank ask-for-help \"<msg>\".\n- Do not stop until crank merge succeeds or crank ask-for-help is called.\n- Do not ask questions; make reasonable assumptions and proceed.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
+        "Read AGENTS.md and any project CLAUDE.md. Task: .crank/{}.md.\n\nRules:\n- Implement the task.\n- Run tests via just (no npx playwright).\n- Manual QA when relevant (use browser-tools).\n- Commit changes before running crank merge; git status must be clean.\n- Run crank merge until it succeeds.\n- If blocked, run crank ask-for-help \"<msg>\".\n- Do not stop until crank merge succeeds or crank ask-for-help is called.\n- Do not ask questions; make reasonable assumptions and proceed.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
         task.id
     )
 }

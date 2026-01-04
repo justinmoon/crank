@@ -21,7 +21,7 @@ struct TaskFrontmatter {
 }
 
 pub fn load_tasks(git_root: &Path) -> Result<Vec<Task>> {
-    let tasks_dir = git_root.join(".issues");
+    let tasks_dir = git_root.join(".crank");
     let entries = match fs::read_dir(&tasks_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -165,7 +165,7 @@ pub fn create_task_file(
     let id = generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = git_root.join(".issues");
+    let tasks_dir = git_root.join(".crank");
     let task_path = tasks_dir.join(&filename);
 
     fs::create_dir_all(&tasks_dir)
@@ -175,7 +175,7 @@ pub fn create_task_file(
     fs::write(&task_path, content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
-    println!("Created: .issues/{filename}");
+    println!("Created: .crank/{filename}");
     Ok(task_path)
 }
 
@@ -185,7 +185,7 @@ pub fn write_current_task_marker(git_root: &Path, task_id: &str) -> Result<()> {
         return Err(anyhow!("task id is required"));
     }
 
-    let tasks_dir = git_root.join(".issues");
+    let tasks_dir = git_root.join(".crank");
     fs::create_dir_all(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 
@@ -198,7 +198,7 @@ pub fn write_current_task_marker(git_root: &Path, task_id: &str) -> Result<()> {
         )
     })?;
 
-    ensure_git_exclude(git_root, ".issues/.current")?;
+    ensure_git_exclude(git_root, ".crank/.current")?;
 
     Ok(())
 }

@@ -52,11 +52,7 @@ impl OpencodeServer {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        Ok(Self {
-            url,
-            client,
-            child,
-        })
+        Ok(Self { url, client, child })
     }
 }
 

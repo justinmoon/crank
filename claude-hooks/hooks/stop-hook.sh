@@ -11,7 +11,7 @@ if [[ -z "$project_dir" ]]; then
   exit 0
 fi
 
-marker="$project_dir/.issues/.current"
+marker="$project_dir/.crank/.current"
 if [[ ! -f "$marker" ]]; then
   exit 0
 fi

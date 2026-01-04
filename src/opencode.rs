@@ -13,8 +13,8 @@ const REVIEW_PROMPT: &str = r#"You are reviewing code changes for merge into mas
 
 1. Read AGENTS.md and CLAUDE.md for project context
 2. Find the task being worked on:
-   - If `.issues/.current` exists, open the referenced `.issues/<id>.md`
-   - Otherwise, scan `.issues/*.md` for `status: in_progress` and use the most recent
+   - If `.crank/.current` exists, open the referenced `.crank/<id>.md`
+   - Otherwise, scan `.crank/*.md` for `status: in_progress` and use the most recent
    - If none found, proceed using only the diff and user request context
 3. Review the diff: `git diff master...HEAD`
 4. {test_instructions}

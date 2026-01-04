@@ -643,7 +643,7 @@ fn render_confirm(state: &TuiState, _area: Rect) -> Paragraph<'static> {
         lines.push(format!("  App:      {}", task.app));
         lines.push(format!("  Priority: P{}", task.priority));
         lines.push(format!("  Status:   {}", task.status));
-        lines.push(format!("  File:     .issues/{}.md", task.id));
+        lines.push(format!("  File:     .crank/{}.md", task.id));
     }
 
     lines.push("".to_string());

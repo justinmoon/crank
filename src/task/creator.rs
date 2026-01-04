@@ -56,9 +56,9 @@ pub fn create_task_interactive(
     let id = store::generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = git_root.join(".issues");
+    let tasks_dir = git_root.join(".crank");
     let task_path = tasks_dir.join(&filename);
-    let rel_task_path = format!(".issues/{filename}");
+    let rel_task_path = format!(".crank/{filename}");
 
     std::fs::create_dir_all(&tasks_dir).map_err(|err| {
         anyhow!(
