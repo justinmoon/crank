@@ -2,6 +2,7 @@
 title: Support custom frontmatter fields in task files
 priority: 2
 status: open
+supervision: unsupervised
 coding_agent: opencode
 created: 2026-01-03
 ---

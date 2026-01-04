@@ -5,6 +5,7 @@ mod agentsmd;
 mod crank_io;
 mod git;
 mod opencode;
+use task::model::SupervisionMode;
 
 #[path = "autopilot/mod.rs"]
 mod orchestrator;
@@ -30,6 +31,10 @@ enum Commands {
         #[arg(long, short)]
         concurrency: u16,
 
+        /// Worker mode (supervised or unsupervised)
+        #[arg(long, value_enum)]
+        mode: SupervisionMode,
+
         /// Filter tasks by project/app name
         #[arg(long)]
         project: Option<String>,
@@ -40,6 +45,10 @@ enum Commands {
         /// Worker ID (1-based)
         #[arg(long)]
         id: u16,
+
+        /// Worker mode (supervised or unsupervised)
+        #[arg(long, value_enum)]
+        mode: SupervisionMode,
 
         /// Filter tasks by project/app name
         #[arg(long)]
@@ -95,6 +104,9 @@ enum Commands {
     #[command(name = "agents.md", alias = "agentsmd")]
     AgentsMd,
 
+    /// Show active alerts in a tmux popup
+    Alerts,
+
     /// Build a workflow instance from a template
     Build(workflow::BuildArgs),
 
@@ -140,13 +152,14 @@ async fn main() -> Result<()> {
 
         Commands::Tmux {
             concurrency,
+            mode,
             project,
         } => {
-            orchestrator::tmux::run_tmux(concurrency, project)?;
+            orchestrator::tmux::run_tmux(concurrency, mode, project)?;
         }
 
-        Commands::Worker { id, project } => {
-            orchestrator::worker::run_worker(id, project).await?;
+        Commands::Worker { id, mode, project } => {
+            orchestrator::worker::run_worker(id, mode, project).await?;
         }
 
         Commands::AskForHelp { message } => {
@@ -154,6 +167,10 @@ async fn main() -> Result<()> {
             let repo_root = task::git::git_root()?;
             let path = orchestrator::controls::ask_for_help(&repo_root, &msg)?;
             println!("Wrote help marker: {}", path.display());
+        }
+
+        Commands::Alerts => {
+            orchestrator::alerts::run_alerts_picker()?;
         }
 
         Commands::Nudge { pane } => {

@@ -1,0 +1,58 @@
+import AppKit
+
+let env = ProcessInfo.processInfo.environment
+let alertsDir = env["CRANK_ALERTS_DIR"] ?? "\(NSHomeDirectory())/.crank/alerts"
+let countPath = env["CRANK_ALERT_COUNT_PATH"] ?? "\(alertsDir)/count"
+let refreshInterval: TimeInterval = 5.0
+
+func readCount() -> Int {
+    if let raw = try? String(contentsOfFile: countPath, encoding: .utf8) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value = Int(trimmed) {
+            return value
+        }
+    }
+    return countAlertFiles(in: alertsDir)
+}
+
+func countAlertFiles(in dir: String) -> Int {
+    guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else {
+        return 0
+    }
+    return entries.filter { $0.hasSuffix(".json") }.count
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem?
+    private var timer: Timer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        statusItem = item
+        updateCount()
+
+        timer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+            self?.updateCount()
+        }
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
+        item.menu = menu
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    private func updateCount() {
+        let count = readCount()
+        statusItem?.button?.title = String(count)
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.setActivationPolicy(.accessory)
+app.delegate = delegate
+app.run()

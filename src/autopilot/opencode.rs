@@ -9,6 +9,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 use crate::orchestrator::logging;
+use crate::task::model::SupervisionMode;
 use crate::task::model::Task;
 
 const OPENCODE_HOST: &str = "http://127.0.0.1";
@@ -67,6 +68,7 @@ pub fn spawn_attach(
     server: &OpencodeServer,
     session_id: &str,
     worktree_path: &Path,
+    mode: SupervisionMode,
 ) -> Result<Child> {
     let mut cmd = Command::new("opencode");
     cmd.arg("attach")
@@ -75,6 +77,7 @@ pub fn spawn_attach(
         .arg(session_id)
         .arg("--dir")
         .arg(worktree_path)
+        .env("CRANK_SUPERVISION", mode.as_str())
         .current_dir(worktree_path);
     cmd.spawn().context("failed to launch opencode attach")
 }

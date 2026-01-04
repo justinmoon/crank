@@ -32,10 +32,11 @@ struct TuiState {
     preview_scroll: u16,
     list_height: usize,
     error: Option<String>,
+    require_selection: bool,
 }
 
 impl TuiState {
-    fn new(mut tasks: Vec<Task>) -> Self {
+    fn new(mut tasks: Vec<Task>, options: PickerOptions) -> Self {
         sort_tasks(&mut tasks);
         let mut state = Self {
             tasks,
@@ -51,6 +52,7 @@ impl TuiState {
             preview_scroll: 0,
             list_height: 10,
             error: None,
+            require_selection: options.require_selection,
         };
         state.refresh_filtered();
         state
@@ -113,8 +115,25 @@ impl TuiState {
     }
 }
 
-pub fn run_picker(tasks: &[Task], git_root: &Path) -> Result<Option<PathBuf>> {
-    let mut state = TuiState::new(tasks.to_vec());
+#[derive(Clone, Copy)]
+pub struct PickerOptions {
+    pub require_selection: bool,
+}
+
+impl Default for PickerOptions {
+    fn default() -> Self {
+        Self {
+            require_selection: false,
+        }
+    }
+}
+
+pub fn run_picker(
+    tasks: &[Task],
+    git_root: &Path,
+    options: PickerOptions,
+) -> Result<Option<PathBuf>> {
+    let mut state = TuiState::new(tasks.to_vec(), options);
 
     let mut terminal = setup_terminal()?;
 
@@ -208,7 +227,13 @@ fn handle_key(
 
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
-            KeyCode::Char('c') => return Ok(true),
+            KeyCode::Char('c') => {
+                if state.require_selection {
+                    state.error = Some("Select a task to continue".to_string());
+                } else {
+                    return Ok(true);
+                }
+            }
             KeyCode::Char('d') | KeyCode::PageDown => {
                 state.page_selection(1);
                 return Ok(false);
@@ -238,7 +263,13 @@ fn handle_key(
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+        KeyCode::Char('q') | KeyCode::Esc => {
+            if state.require_selection {
+                state.error = Some("Select a task to continue".to_string());
+            } else {
+                return Ok(true);
+            }
+        }
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Enter => {
             if let Some(task) = state.selected_task() {
@@ -431,7 +462,11 @@ fn render_header(state: &TuiState, area: Rect) -> Paragraph<'_> {
     let filter_mode = if state.show_all { "all" } else { "open only" };
 
     let title = format!("Tasks ({open_count} open, {closed_count} closed) [{filter_mode}]");
-    let help_hint = "? help  q quit";
+    let help_hint = if state.require_selection {
+        "? help"
+    } else {
+        "? help  q quit"
+    };
 
     let mut line = title.clone();
     if area.width as usize > title.len() + help_hint.len() + 2 {
@@ -444,7 +479,7 @@ fn render_header(state: &TuiState, area: Rect) -> Paragraph<'_> {
 
 fn render_body(frame: &mut ratatui::Frame<'_>, state: &mut TuiState, area: Rect) {
     if state.show_help {
-        let help = render_help(area);
+        let help = render_help(state);
         frame.render_widget(help, area);
         return;
     }
@@ -592,10 +627,14 @@ fn render_footer(state: &TuiState, _area: Rect) -> Paragraph<'_> {
             Style::default().fg(Color::DarkGray),
         )
     } else {
-        (
-            "j/k list  J/K preview  enter select  tab toggle  n new  e edit  d delete  a all  / filter  ? help".to_string(),
-            Style::default().fg(Color::DarkGray),
-        )
+        let base =
+            "j/k list  J/K preview  enter select  tab toggle  n new  e edit  d delete  a all  / filter  ? help";
+        let footer = if state.require_selection {
+            base.to_string()
+        } else {
+            format!("{base}  q quit")
+        };
+        (footer, Style::default().fg(Color::DarkGray))
     };
 
     Paragraph::new(footer)
@@ -604,8 +643,8 @@ fn render_footer(state: &TuiState, _area: Rect) -> Paragraph<'_> {
         .block(Block::default().borders(Borders::NONE))
 }
 
-fn render_help(_area: Rect) -> Paragraph<'static> {
-    let lines = vec![
+fn render_help(state: &TuiState) -> Paragraph<'static> {
+    let mut lines = vec![
         "Keyboard Shortcuts",
         "",
         "j / k / arrows  Move up/down in list",
@@ -621,10 +660,14 @@ fn render_help(_area: Rect) -> Paragraph<'static> {
         "a                Toggle show all/open only",
         "p                Toggle preview pane",
         "/                Start filtering",
-        "esc              Clear filter / quit",
-        "q                Quit",
         "?                Toggle this help",
     ];
+    if state.require_selection {
+        lines.push("esc              Clear filter");
+    } else {
+        lines.push("esc              Clear filter / quit");
+        lines.push("q                Quit");
+    }
 
     let text = lines.join("\n");
     Paragraph::new(text)
