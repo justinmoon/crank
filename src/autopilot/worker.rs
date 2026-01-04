@@ -92,13 +92,22 @@ pub async fn run_worker(id: u16, project: Option<String>) -> Result<()> {
             &worktree_path,
             &prompt,
             agent,
-            id,
-            &tmux_pane,
-            &logger,
-            &repo_root,
+            &WorkerContext {
+                worker_id: id,
+                tmux_pane: &tmux_pane,
+                logger: &logger,
+                repo_root: &repo_root,
+            },
         )
         .await?;
     }
+}
+
+struct WorkerContext<'a> {
+    worker_id: u16,
+    tmux_pane: &'a str,
+    logger: &'a Logger,
+    repo_root: &'a Path,
 }
 
 async fn supervise_task(
@@ -106,13 +115,10 @@ async fn supervise_task(
     worktree_path: &Path,
     prompt: &str,
     agent: AgentKind,
-    worker_id: u16,
-    tmux_pane: &str,
-    logger: &Logger,
-    repo_root: &Path,
+    ctx: &WorkerContext<'_>,
 ) -> Result<()> {
     log_and_print(
-        logger,
+        ctx.logger,
         "info",
         &format!(
             "supervising task {} in {}",
@@ -125,9 +131,9 @@ async fn supervise_task(
         worktree_path,
         prompt,
         agent,
-        worker_id,
-        tmux_pane,
-        logger,
+        ctx.worker_id,
+        ctx.tmux_pane,
+        ctx.logger,
     )
     .await?;
 
@@ -137,8 +143,8 @@ async fn supervise_task(
 
     loop {
         if markers::merged_marker_exists(&task.id)? {
-            log_and_print(logger, "info", "merged marker found; closing task")?;
-            clear_active_claim(repo_root, &task.id)?;
+            log_and_print(ctx.logger, "info", "merged marker found; closing task")?;
+            clear_active_claim(ctx.repo_root, &task.id)?;
             close_task(task)?;
             agent_session.terminate();
             return Ok(());
@@ -149,19 +155,19 @@ async fn supervise_task(
 
         if help_requested {
             log_and_print(
-                logger,
+                ctx.logger,
                 "info",
                 "help requested; marking needs_human and releasing task",
             )?;
             mark_task_needs_human(task)?;
-            clear_active_claim(repo_root, &task.id)?;
+            clear_active_claim(ctx.repo_root, &task.id)?;
             agent_session.terminate();
             return Ok(());
         }
 
         if agent_session.child_exited()? {
-            log_and_print(logger, "info", "agent exited; restarting")?;
-            agent_session.restart_child(task, worktree_path, prompt, tmux_pane)?;
+            log_and_print(ctx.logger, "info", "agent exited; restarting")?;
+            agent_session.restart_child(task, worktree_path, prompt, ctx.tmux_pane)?;
         }
 
         if !help_requested && !pause_requested {
@@ -174,7 +180,7 @@ async fn supervise_task(
                                 && last_opencode_nudge.elapsed() >= OPENCODE_NUDGE_THROTTLE
                             {
                                 last_opencode_nudge = Instant::now();
-                                log_and_print(logger, "info", "opencode idle; nudging")?;
+                                log_and_print(ctx.logger, "info", "opencode idle; nudging")?;
                                 opencode::send_prompt(server, id, prompt).await?;
                             }
                         }
@@ -188,8 +194,8 @@ async fn supervise_task(
                         .unwrap_or_default()
                         >= CODEX_IDLE_NUDGE_AFTER
                     {
-                        log_and_print(logger, "info", "codex idle; nudging")?;
-                        controls::nudge_task(&task.id, tmux_pane)?;
+                        log_and_print(ctx.logger, "info", "codex idle; nudging")?;
+                        controls::nudge_task(&task.id, ctx.tmux_pane)?;
                         start_time = SystemTime::now();
                     }
                 }
