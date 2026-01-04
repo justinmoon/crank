@@ -40,6 +40,9 @@ fn claim_next_task_with_lock_dir(
         if task.status != TASK_STATUS_OPEN {
             continue;
         }
+        if !task.autopilot {
+            continue;
+        }
         if let Some(project) = project {
             if task.app != project {
                 continue;
@@ -153,7 +156,7 @@ mod tests {
     ) -> PathBuf {
         let path = dir.join(format!("{id}.md"));
         let content = format!(
-            "---\napp: crank\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
+            "---\napp: crank\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\nautopilot: true\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
         );
         fs::write(&path, content).unwrap();
         path
@@ -201,7 +204,7 @@ mod tests {
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         let other = issues.join("b222.md");
-        let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
+        let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\nautopilot: true\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
         fs::write(&other, content).unwrap();
 
         let claimed =

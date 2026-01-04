@@ -140,6 +140,7 @@ fn build_task_content(
         title_line,
         "priority: 3".to_string(),
         "status: open".to_string(),
+        "autopilot: true".to_string(),
         format!("workflow: {}", yaml_quote(workflow_id)),
         format!("step_id: {}", yaml_quote(step_id)),
     ];

@@ -2,9 +2,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod agentsmd;
-mod autopilot;
 mod git;
 mod opencode;
+#[path = "autopilot/mod.rs"]
+mod orchestrator;
 mod run;
 mod workflow;
 
@@ -21,7 +22,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Launch tmux autopilot session
+    /// Launch tmux orchestrator session
     Tmux {
         /// Number of workers to run
         #[arg(long, short)]
@@ -132,28 +133,28 @@ async fn main() -> Result<()> {
             concurrency,
             project,
         } => {
-            autopilot::tmux::run_tmux(concurrency, project)?;
+            orchestrator::tmux::run_tmux(concurrency, project)?;
         }
 
         Commands::Worker { id, project } => {
-            autopilot::worker::run_worker(id, project).await?;
+            orchestrator::worker::run_worker(id, project).await?;
         }
 
         Commands::AskForHelp { message } => {
             let msg = message.join(" ");
             let repo_root = task::git::git_root()?;
-            let path = autopilot::controls::ask_for_help(&repo_root, &msg)?;
+            let path = orchestrator::controls::ask_for_help(&repo_root, &msg)?;
             println!("Wrote help marker: {}", path.display());
         }
 
         Commands::Nudge { pane } => {
             let repo_root = task::git::git_root()?;
-            autopilot::controls::nudge(&repo_root, &pane)?;
+            orchestrator::controls::nudge(&repo_root, &pane)?;
         }
 
         Commands::Pause { clear } => {
             let repo_root = task::git::git_root()?;
-            let path = autopilot::controls::pause(&repo_root, clear)?;
+            let path = orchestrator::controls::pause(&repo_root, clear)?;
             if let Some(path) = path {
                 println!("Paused nudges: {}", path.display());
             } else {
