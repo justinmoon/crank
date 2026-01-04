@@ -81,6 +81,16 @@ mod tests {
     }
 
     #[test]
+    fn ensure_dir_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("a").join("b");
+
+        ensure_dir(&nested).unwrap();
+        ensure_dir(&nested).unwrap();
+        assert!(nested.exists());
+    }
+
+    #[test]
     fn write_and_read_roundtrip() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("file.txt");
