@@ -25,7 +25,7 @@ struct TaskFrontmatter {
 }
 
 pub fn load_tasks(git_root: &Path) -> Result<Vec<Task>> {
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     let entries = match fs::read_dir(&tasks_dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -51,7 +51,7 @@ pub fn load_tasks(git_root: &Path) -> Result<Vec<Task>> {
 }
 
 pub fn parse_task(path: &Path) -> Result<Task> {
-    let content = fs::read_to_string(path)
+    let content = crate::crank_io::read_to_string(path)
         .with_context(|| format!("failed to read task file: {}", path.display()))?;
 
     let (frontmatter, title_fallback) = parse_frontmatter(&content)?;
@@ -213,7 +213,7 @@ pub fn create_task_file(
     let id = generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     let task_path = tasks_dir.join(&filename);
 
     fs::create_dir_all(&tasks_dir)
@@ -233,7 +233,7 @@ pub fn write_current_task_marker(git_root: &Path, task_id: &str) -> Result<()> {
         return Err(anyhow!("task id is required"));
     }
 
-    let tasks_dir = git_root.join(".crank");
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
     fs::create_dir_all(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 

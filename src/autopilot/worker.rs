@@ -429,7 +429,7 @@ fn create_worktree(repo_root: &Path, task: &Task) -> Result<(String, PathBuf)> {
     }
 
     let worktrees_dir = repo_root.join("worktrees");
-    std::fs::create_dir_all(&worktrees_dir)
+    crate::crank_io::ensure_dir(&worktrees_dir)
         .with_context(|| format!("failed to create {}", worktrees_dir.display()))?;
 
     let base = branch::generate_branch_name(&task.path, &task.title, &task.id)?;

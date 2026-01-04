@@ -2,8 +2,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod agentsmd;
+mod crank_io;
 mod git;
 mod opencode;
+
+
 #[path = "autopilot/mod.rs"]
 mod orchestrator;
 mod run;

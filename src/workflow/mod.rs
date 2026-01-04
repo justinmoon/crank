@@ -66,9 +66,8 @@ pub fn build_template_at(git_root: &Path, args: &BuildArgs) -> Result<()> {
     let vars = parse_vars(&args.vars)?;
     let resolved_vars = resolve_vars(&template, vars)?;
 
-    let tasks_dir = git_root.join(".crank");
-    std::fs::create_dir_all(&tasks_dir)
-        .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
+    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
+    crate::crank_io::ensure_dir(&tasks_dir)?;
 
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
 
@@ -248,7 +247,7 @@ fn load_template(git_root: &Path, name: &str) -> Result<WorkflowTemplate> {
         return Err(anyhow!("workflow template not found: {name}"));
     };
 
-    let content = std::fs::read_to_string(&path)
+    let content = crate::crank_io::read_to_string(&path)
         .with_context(|| format!("failed to read workflow template: {}", path.display()))?;
     let template: WorkflowTemplate = toml::from_str(&content)
         .with_context(|| format!("failed to parse workflow template: {}", path.display()))?;
@@ -257,11 +256,11 @@ fn load_template(git_root: &Path, name: &str) -> Result<WorkflowTemplate> {
 }
 
 fn repo_templates_dir(git_root: &Path) -> PathBuf {
-    git_root.join(".crank").join("workflows")
+    crate::crank_io::repo_workflows_dir(git_root)
 }
 
 fn user_templates_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|dir| dir.join(".crank").join("workflows"))
+    crate::crank_io::user_workflows_dir_opt()
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -281,7 +280,7 @@ fn write_manifest_at(git_root: &Path, workflow_id: &str, steps: &[WorkflowStep])
     };
     let path = manifest_path(git_root, workflow_id);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
+        crate::crank_io::ensure_dir(parent).with_context(|| {
             format!(
                 "failed to create workflow manifest directory: {}",
                 parent.display()
@@ -289,7 +288,7 @@ fn write_manifest_at(git_root: &Path, workflow_id: &str, steps: &[WorkflowStep])
         })?;
     }
     let content = toml::to_string_pretty(&manifest)?;
-    std::fs::write(&path, content)
+    crate::crank_io::write_string(&path, &content)
         .with_context(|| format!("failed to write workflow manifest: {}", path.display()))?;
     Ok(())
 }
@@ -299,7 +298,7 @@ pub fn load_manifest(git_root: &Path, workflow_id: &str) -> Result<Option<Workfl
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path)
+    let content = crate::crank_io::read_to_string(&path)
         .with_context(|| format!("failed to read workflow manifest: {}", path.display()))?;
     let manifest: WorkflowManifest = toml::from_str(&content)
         .with_context(|| format!("failed to parse workflow manifest: {}", path.display()))?;

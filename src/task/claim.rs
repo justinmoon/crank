@@ -91,14 +91,15 @@ fn max_date() -> NaiveDate {
 fn acquire_claim_lock(repo_root: &Path, lock_dir_override: Option<&Path>) -> Result<ClaimLock> {
     let crank_dir = match lock_dir_override {
         Some(dir) => dir.to_path_buf(),
-        None => dirs::home_dir()
-            .context("Could not find home directory")?
-            .join(".crank")
-            .join("locks")
-            .join(repo_id(repo_root)),
+        None => {
+            let home_dir = dirs::home_dir().context("Could not find home directory")?;
+            crate::crank_io::user_crank_dir_from(&home_dir)
+                .join("locks")
+                .join(repo_id(repo_root))
+        }
     };
 
-    std::fs::create_dir_all(&crank_dir)
+    crate::crank_io::ensure_dir(&crank_dir)
         .with_context(|| format!("failed to create crank lock dir: {}", crank_dir.display()))?;
 
     let lock_dir = crank_dir.join("task-claim.lock.d");
@@ -168,7 +169,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
+        let issues = crate::crank_io::repo_crank_dir(git_root);
         fs::create_dir_all(&issues).unwrap();
 
         write_task(
@@ -199,7 +200,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
+        let issues = crate::crank_io::repo_crank_dir(git_root);
         fs::create_dir_all(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
@@ -220,7 +221,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".crank");
+        let issues = crate::crank_io::repo_crank_dir(git_root);
         fs::create_dir_all(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
