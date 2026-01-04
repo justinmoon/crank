@@ -165,7 +165,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".issues");
+        let issues = git_root.join(".crank");
         fs::create_dir_all(&issues).unwrap();
 
         write_task(
@@ -196,7 +196,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".issues");
+        let issues = git_root.join(".crank");
         fs::create_dir_all(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
@@ -217,7 +217,7 @@ mod tests {
         let git_root = dir.path();
         let repo_root = dir.path();
         let lock_dir = dir.path().join("locks");
-        let issues = git_root.join(".issues");
+        let issues = git_root.join(".crank");
         fs::create_dir_all(&issues).unwrap();
 
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");

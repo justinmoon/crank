@@ -21,12 +21,12 @@ use crate::task::tui;
 
 const COMMIT_MSG_HOOK: &str = r#"#!/bin/sh
 
-MARKER=".issues/.current"
+MARKER=".crank/.current"
 MSG_FILE="$1"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 if [ -n "$REPO_ROOT" ]; then
-    MARKER="$REPO_ROOT/.issues/.current"
+    MARKER="$REPO_ROOT/.crank/.current"
 fi
 
 if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
@@ -55,7 +55,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
 
     let mut tasks = store::load_tasks(&git_root)?;
     if tasks.is_empty() {
-        return Err(anyhow!("no tasks found in {}/.issues", git_root.display()));
+        return Err(anyhow!("no tasks found in {}/.crank", git_root.display()));
     }
 
     sort_tasks(&mut tasks);
@@ -144,7 +144,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
         }
     }
 
-    let rel_issue_path = format!(".issues/{}.md", selected.id);
+    let rel_issue_path = format!(".crank/{}.md", selected.id);
 
     run_tmux_flow(&branch, &worktree_path, &workdir, &model, &rel_issue_path)
 }
@@ -261,7 +261,7 @@ pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {
 
     let task_path = git::task_path_for_id(&git_root, &task_id);
     if !task_path.exists() {
-        return Err(anyhow!("task not found: .issues/{task_id}.md"));
+        return Err(anyhow!("task not found: .crank/{task_id}.md"));
     }
 
     let status = if let Some(pr) = pr_number {
@@ -272,7 +272,7 @@ pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {
 
     store::update_task_status(&task_path, &status)?;
 
-    println!("Marked .issues/{task_id}.md as {status}");
+    println!("Marked .crank/{task_id}.md as {status}");
     Ok(())
 }
 

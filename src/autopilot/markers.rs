@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 
 pub fn read_current_task_id(repo_root: &Path) -> Result<String> {
-    let marker = repo_root.join(".issues").join(".current");
+    let marker = repo_root.join(".crank").join(".current");
     let content = fs::read_to_string(&marker)
         .with_context(|| format!("failed to read current task marker: {}", marker.display()))?;
     parse_current_task_id(&content)
