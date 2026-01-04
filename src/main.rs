@@ -1,11 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 mod agentsmd;
 mod approval;
 mod autopilot;
 mod git;
+mod merge_steps;
 mod opencode;
+mod workflow;
 
 pub mod task;
 
@@ -162,6 +165,14 @@ enum Commands {
         id: Option<String>,
     },
 
+    /// Workflow commands
+    #[command(subcommand)]
+    Workflow(workflow::WorkflowCommand),
+
+    /// Merge step commands (internal)
+    #[command(subcommand, hide = true)]
+    MergeStep(merge_steps::MergeStepCommand),
+
     /// Task tracking commands
     #[command(subcommand)]
     Task(task::cli::TaskCommand),
@@ -186,7 +197,7 @@ async fn main() -> Result<()> {
             notify_interval,
         } => {
             let worktree = worktree.unwrap_or_else(|| ".".to_string());
-            git::merge_command(git::MergeOptions {
+            merge_workflow_command(git::MergeOptions {
                 worktree,
                 dry_run,
                 base,
@@ -234,6 +245,14 @@ async fn main() -> Result<()> {
             attach_command(id).await?;
         }
 
+        Commands::Workflow(cmd) => {
+            workflow::run_command(cmd).await?;
+        }
+
+        Commands::MergeStep(cmd) => {
+            merge_steps::run_command(cmd).await?;
+        }
+
         Commands::Task(cmd) => {
             task::cli::run_subcommand(cmd)?;
         }
@@ -273,6 +292,76 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn merge_workflow_command(opts: git::MergeOptions) -> Result<()> {
+    let worktree_path = std::fs::canonicalize(&opts.worktree)
+        .with_context(|| format!("invalid worktree path: {}", opts.worktree))?;
+    let git_root = git::get_git_root(&worktree_path).await?;
+    let branch = git::get_current_branch(&git_root).await?;
+    let short_commit = git::get_head_commit(&git_root).await?;
+    let workflow_id = format!(
+        "merge-{}-{}",
+        sanitize_workflow_component(&branch),
+        short_commit
+    );
+
+    let target_repo_flag = match opts.target_repo.as_deref() {
+        Some(path) => {
+            let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+            format!("--target-repo \"{}\"", resolved.display())
+        }
+        None => String::new(),
+    };
+
+    let vars = vec![
+        format!("base={}", opts.base),
+        format!("worktree={}", worktree_path.display()),
+        format!("timeout={}", opts.timeout),
+        format!("notify_interval={}", opts.notify_interval),
+        format!("skip_pre_merge_flag={}", flag_value(opts.skip_pre_merge, "--skip")),
+        format!("skip_review_flag={}", flag_value(opts.skip_review, "--skip")),
+        format!(
+            "review_skip_tests_flag={}",
+            flag_value(!opts.skip_pre_merge, "--skip-tests")
+        ),
+        format!("dry_run_flag={}", flag_value(opts.dry_run, "--dry-run")),
+        format!("notify_flag={}", flag_value(opts.notify, "--notify")),
+        format!("target_repo_flag={}", target_repo_flag),
+    ];
+
+    let existing = task::store::load_tasks(&git_root)?;
+    let has_workflow = existing
+        .iter()
+        .any(|task| task.workflow.as_deref() == Some(&workflow_id));
+
+    if !has_workflow {
+        let apply_args = workflow::WorkflowApplyArgs {
+            template: "merge".to_string(),
+            id: Some(workflow_id.clone()),
+            vars,
+            ephemeral: true,
+            force: false,
+        };
+        workflow::apply_template_at(&git_root, &apply_args)?;
+    }
+
+    workflow::run_workflow_at(&git_root, &workflow_id, 2).await
+}
+
+fn flag_value(enabled: bool, flag: &str) -> String {
+    if enabled {
+        flag.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn sanitize_workflow_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect()
 }
 
 async fn attach_command(id: Option<String>) -> Result<()> {

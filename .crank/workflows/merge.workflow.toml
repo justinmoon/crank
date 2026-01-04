@@ -1,0 +1,50 @@
+workflow = "merge"
+version = 1
+description = "Merge via crank workflow"
+
+[vars]
+base = { default = "master" }
+worktree = { default = "." }
+timeout = { default = "600000" }
+notify_interval = { default = "60000" }
+skip_pre_merge_flag = { default = "" }
+skip_review_flag = { default = "" }
+review_skip_tests_flag = { default = "" }
+dry_run_flag = { default = "" }
+notify_flag = { default = "" }
+target_repo_flag = { default = "" }
+
+[[steps]]
+id = "preflight"
+title = "Preflight checks"
+run = "crank merge-step preflight --worktree \"{{worktree}}\" --base {{base}}"
+
+[[steps]]
+id = "pre-merge"
+title = "Run pre-merge"
+run = "crank merge-step pre-merge --worktree \"{{worktree}}\" --timeout {{timeout}} {{skip_pre_merge_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "review"
+title = "Run review"
+run = "crank merge-step review --worktree \"{{worktree}}\" --timeout {{timeout}} {{review_skip_tests_flag}} {{skip_review_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "conflicts"
+title = "Check conflicts"
+run = "crank merge-step conflicts --worktree \"{{worktree}}\" --base {{base}}"
+needs = ["pre-merge", "review"]
+
+[[steps]]
+id = "approval"
+title = "Wait for approval"
+run = "crank merge-step approval --worktree \"{{worktree}}\" --base {{base}} {{notify_flag}} --notify-interval {{notify_interval}} {{target_repo_flag}}"
+needs = ["conflicts"]
+
+[[steps]]
+id = "merge"
+title = "Merge and push"
+run = "crank merge-step apply --worktree \"{{worktree}}\" --base {{base}} {{dry_run_flag}} {{target_repo_flag}}"
+needs = ["approval"]

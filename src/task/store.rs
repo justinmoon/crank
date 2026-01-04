@@ -16,6 +16,9 @@ struct TaskFrontmatter {
     status: Option<String>,
     title: Option<String>,
     depends_on: Option<Vec<Dependency>>,
+    workflow: Option<String>,
+    step_id: Option<String>,
+    run: Option<String>,
     coding_agent: Option<String>,
     created: Option<NaiveDate>,
 }
@@ -70,6 +73,11 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         status: frontmatter.status.unwrap_or_default(),
         title,
         depends_on: frontmatter.depends_on.unwrap_or_default(),
+        workflow: frontmatter
+            .workflow
+            .filter(|value| !value.trim().is_empty()),
+        step_id: frontmatter.step_id.filter(|value| !value.trim().is_empty()),
+        run: frontmatter.run.filter(|value| !value.trim().is_empty()),
         coding_agent: frontmatter
             .coding_agent
             .unwrap_or_else(|| "opencode".to_string()),
@@ -246,7 +254,7 @@ fn update_frontmatter_field(task_path: &Path, key: &str, value: &str) -> Result<
     Ok(())
 }
 
-fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
+pub(crate) fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
     let git_dir = crate::task::git::git_common_dir_from(git_root)?;
     let exclude_path = git_dir.join("info").join("exclude");
     if let Some(parent) = exclude_path.parent() {
@@ -544,6 +552,9 @@ app: reader-rs
 title: Test Task
 priority: 3
 status: open
+workflow: review-flow
+step_id: implement
+run: crank merge
 created: 2024-12-30
 ---
 
@@ -557,6 +568,9 @@ created: 2024-12-30
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.priority, 3);
         assert_eq!(task.status, "open");
+        assert_eq!(task.workflow.as_deref(), Some("review-flow"));
+        assert_eq!(task.step_id.as_deref(), Some("implement"));
+        assert_eq!(task.run.as_deref(), Some("crank merge"));
         assert_eq!(task.coding_agent, "opencode");
         assert_eq!(
             task.created,

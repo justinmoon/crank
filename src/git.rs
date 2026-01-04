@@ -255,6 +255,65 @@ pub struct MergeOptions {
     pub notify_interval: u64,
 }
 
+pub async fn merge_preflight(worktree_path: &Path, base_branch: &str) -> Result<()> {
+    ensure_merge_ready(worktree_path, base_branch).await
+}
+
+pub async fn merge_pre_merge(worktree_path: &Path, timeout_ms: u64) -> Result<()> {
+    let git_root = get_git_root(worktree_path).await?;
+    let mut child = Command::new("just")
+        .arg("pre-merge")
+        .current_dir(&git_root)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("failed to run just pre-merge")?;
+
+    let status = tokio::time::timeout(Duration::from_millis(timeout_ms), child.wait()).await;
+
+    match status {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(anyhow::anyhow!(
+            "pre-merge failed with status {}",
+            status.code().unwrap_or(1)
+        )),
+        Ok(Err(err)) => Err(anyhow::anyhow!("pre-merge failed: {err}")),
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(anyhow::anyhow!("pre-merge timed out"))
+        }
+    }
+}
+
+pub async fn merge_review(worktree_path: &Path, skip_tests: bool, timeout_ms: u64) -> Result<()> {
+    let git_root = get_git_root(worktree_path).await?;
+    let branch = get_current_branch(&git_root).await?;
+    let result = opencode::run_review(&git_root, &branch, skip_tests, timeout_ms, None).await;
+
+    if result.status == "pass" {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "review failed: {}",
+            result.tail.unwrap_or_else(|| "unknown".to_string())
+        ))
+    }
+}
+
+pub async fn merge_conflicts(worktree_path: &Path, base_branch: &str) -> Result<Vec<String>> {
+    let git_root = get_git_root(worktree_path).await?;
+    check_conflicts(&git_root, base_branch).await
+}
+
+pub async fn merge_apply(
+    worktree_path: &Path,
+    base_branch: &str,
+    target_repo: Option<&Path>,
+) -> Result<String> {
+    let git_root = get_git_root(worktree_path).await?;
+    merge_and_push(&git_root, base_branch, target_repo).await
+}
+
 #[derive(Debug, Serialize)]
 pub struct StepResult {
     pub step: String,
@@ -390,7 +449,7 @@ async fn get_remote_url(cwd: &Path) -> Result<String> {
 }
 
 /// Get short commit hash
-async fn get_head_commit(cwd: &Path) -> Result<String> {
+pub async fn get_head_commit(cwd: &Path) -> Result<String> {
     git(cwd, &["rev-parse", "--short", "HEAD"]).await
 }
 
@@ -423,7 +482,7 @@ async fn check_conflicts(cwd: &Path, base_branch: &str) -> Result<Vec<String>> {
 }
 
 /// Get the main worktree path (the original checkout, not a linked worktree)
-async fn get_main_worktree(cwd: &Path) -> Result<PathBuf> {
+pub async fn get_main_worktree(cwd: &Path) -> Result<PathBuf> {
     let output = git(cwd, &["worktree", "list", "--porcelain"]).await?;
 
     // First worktree in the list is the main one

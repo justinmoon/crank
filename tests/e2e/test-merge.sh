@@ -21,6 +21,8 @@ if [[ ! -x "$CRANK_BIN" ]]; then
     exit 1
 fi
 
+export PATH="$(dirname "$CRANK_BIN"):$PATH"
+
 # Create temp directory for test repos
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
@@ -73,7 +75,62 @@ setup_repos() {
     git config user.email "test@test.com"
     git config user.name "Test User"
     git fetch origin >/dev/null 2>&1
-    
+
+    mkdir -p "$TMPDIR/worktree/.crank/workflows"
+    cat > "$TMPDIR/worktree/.crank/workflows/merge.workflow.toml" <<'EOF'
+workflow = "merge"
+version = 1
+
+[vars]
+base = { default = "master" }
+worktree = { default = "." }
+timeout = { default = "600000" }
+notify_interval = { default = "60000" }
+skip_pre_merge_flag = { default = "" }
+skip_review_flag = { default = "" }
+review_skip_tests_flag = { default = "" }
+dry_run_flag = { default = "" }
+notify_flag = { default = "" }
+target_repo_flag = { default = "" }
+
+[[steps]]
+id = "preflight"
+title = "Preflight checks"
+run = "crank merge-step preflight --worktree \"{{worktree}}\" --base {{base}}"
+
+[[steps]]
+id = "pre-merge"
+title = "Run pre-merge"
+run = "crank merge-step pre-merge --worktree \"{{worktree}}\" --timeout {{timeout}} {{skip_pre_merge_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "review"
+title = "Run review"
+run = "crank merge-step review --worktree \"{{worktree}}\" --timeout {{timeout}} {{review_skip_tests_flag}} {{skip_review_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "conflicts"
+title = "Check conflicts"
+run = "crank merge-step conflicts --worktree \"{{worktree}}\" --base {{base}}"
+needs = ["pre-merge", "review"]
+
+[[steps]]
+id = "approval"
+title = "Wait for approval"
+run = "crank merge-step approval --worktree \"{{worktree}}\" --base {{base}} {{notify_flag}} --notify-interval {{notify_interval}} {{target_repo_flag}}"
+needs = ["conflicts"]
+
+[[steps]]
+id = "merge"
+title = "Merge and push"
+run = "crank merge-step apply --worktree \"{{worktree}}\" --base {{base}} {{dry_run_flag}} {{target_repo_flag}}"
+needs = ["approval"]
+EOF
+
+    echo ".crank/workflows/" >> "$TMPDIR/worktree/.git/info/exclude"
+
     echo "Repositories ready."
     echo ""
 }
@@ -99,20 +156,13 @@ test_happy_path_merge() {
         --skip-pre-merge \
         --target-repo "$TMPDIR/target" \
         --base master 2>&1); then
-        
-        # Verify JSON output indicates success
-        if echo "$output" | grep -q '"status":"pass"'; then
-            # Verify merge landed on origin
-            cd "$TMPDIR/origin"
-            if git log --oneline master | grep -q "Merge feature-add-line"; then
-                pass "Branch merged and pushed to origin/master"
-            else
-                fail "Merge commit not found on origin/master"
-                echo "  Origin log: $(git log --oneline -3 master)"
-            fi
+        # Verify merge landed on origin
+        cd "$TMPDIR/origin"
+        if git log --oneline master | grep -q "Merge feature-add-line"; then
+            pass "Branch merged and pushed to origin/master"
         else
-            fail "Expected status:pass in output"
-            echo "  Output: $output"
+            fail "Merge commit not found on origin/master"
+            echo "  Origin log: $(git log --oneline -3 master)"
         fi
     else
         fail "crank merge command failed"
@@ -147,7 +197,6 @@ test_preflight_requires_commit() {
         --base master 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]] \
-        && echo "$output" | grep -q '"step":"preflight"' \
         && echo "$output" | grep -q "no commits to merge"; then
         pass "Preflight blocks merges with no commits"
     else
@@ -167,7 +216,6 @@ test_preflight_requires_commit() {
         --base master 2>&1) || exit_code=$?
 
     if [[ $exit_code -ne 0 ]] \
-        && echo "$output" | grep -q '"step":"preflight"' \
         && echo "$output" | grep -q "uncommitted changes"; then
         pass "Preflight blocks merges with dirty worktree"
     else
@@ -222,10 +270,10 @@ test_conflict_detection() {
         --base master 2>&1) || exit_code=$?
     
     # Should fail with conflict status
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -q '"status":"conflict"'; then
+    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qi "merge conflict"; then
         pass "Conflict correctly detected and reported"
     else
-        fail "Expected conflict status with non-zero exit"
+        fail "Expected conflict error with non-zero exit"
         echo "  Exit code: $exit_code"
         echo "  Output: $output"
     fi
@@ -267,24 +315,17 @@ test_dry_run() {
         --target-repo "$TMPDIR/target" \
         --base master \
         --dry-run 2>&1); then
-        
-        # Check output indicates dry run
-        if echo "$output" | grep -q '"dry_run":true'; then
-            # Verify origin/master unchanged
-            cd "$TMPDIR/origin"
-            local after_commit
-            after_commit=$(git rev-parse master)
-            
-            if [[ "$before_commit" == "$after_commit" ]]; then
-                pass "Dry run did not modify origin/master"
-            else
-                fail "Dry run incorrectly modified origin/master"
-                echo "  Before: $before_commit"
-                echo "  After: $after_commit"
-            fi
+        # Verify origin/master unchanged
+        cd "$TMPDIR/origin"
+        local after_commit
+        after_commit=$(git rev-parse master)
+
+        if [[ "$before_commit" == "$after_commit" ]]; then
+            pass "Dry run did not modify origin/master"
         else
-            fail "Expected dry_run:true in output"
-            echo "  Output: $output"
+            fail "Dry run incorrectly modified origin/master"
+            echo "  Before: $before_commit"
+            echo "  After: $after_commit"
         fi
     else
         fail "crank merge --dry-run command failed"
