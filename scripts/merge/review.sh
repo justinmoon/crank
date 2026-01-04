@@ -58,11 +58,12 @@ import json,sys
 try:
     data=json.loads(sys.argv[1])
 except Exception:
-    print("invalid")
+    print("")
+    print("")
     sys.exit(0)
-status=data.get("status")
-reason=data.get("reason") or ""
-print(status or "")
+status=data.get("status") or ""
+reason=(data.get("reason") or "").replace("\n", " ").strip()
+print(status)
 print(reason)
 PY
 "$json_line")
@@ -75,17 +76,14 @@ if [[ "$review_status" == "pass" ]]; then
   exit 0
 fi
 
-if [[ "$review_status" == "fail" ]]; then
-  if [[ -n "$review_reason" ]]; then
-    echo "FAIL: $review_reason"
+if [[ $status -ne 0 ]]; then
+  if [[ "$review_status" == "fail" && -n "$review_reason" ]]; then
+    printf "FAIL: %s\n" "$review_reason"
   else
     echo "FAIL: review failed"
   fi
-  exit 1
+  exit $status
 fi
 
 echo "FAIL: review output invalid"
-if [[ $status -ne 0 ]]; then
-  exit $status
-fi
 exit 1
