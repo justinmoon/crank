@@ -337,7 +337,7 @@ fn terminate_child(child: Option<Child>) {
 
 fn build_prompt(task: &Task) -> String {
     format!(
-        "Read AGENTS.md and any project CLAUDE.md. Task: .crank/{}.md.\n\nRules:\n- Implement the task.\n- Run tests via just (no npx playwright).\n- Manual QA when relevant (use browser-tools).\n- Commit changes before running crank merge; git status must be clean.\n- Run crank merge until it succeeds.\n- If blocked, run crank ask-for-help \"<msg>\".\n- Do not stop until crank merge succeeds or crank ask-for-help is called.\n- Do not ask questions; make reasonable assumptions and proceed.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
+        "Read AGENTS.md and any project CLAUDE.md. Task: .crank/{}.md.\n\nRules:\n- Implement the task.\n- Run tests via just (no npx playwright).\n- Manual QA when relevant (use browser-tools).\n- Commit changes before running the merge workflow; git status must be clean.\n- Run the merge workflow until it succeeds.\n- If blocked, run crank ask-for-help \"<msg>\".\n- Do not stop until the merge workflow succeeds or crank ask-for-help is called.\n- Do not ask questions; make reasonable assumptions and proceed.\n- Commands already run in the task worktree; do not use cd, -C, or absolute paths.",
         task.id
     )
 }
@@ -374,8 +374,26 @@ fn run_direnv_allow(worktree_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn repo_root_from(path: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .context("failed to run git rev-parse for common dir")?;
+    if !output.status.success() {
+        return Err(anyhow!("not in a git repository"));
+    }
+    let mut root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.ends_with(".git") {
+        root = root.trim_end_matches(".git").to_string();
+        root = root.trim_end_matches('/').to_string();
+    }
+    Ok(PathBuf::from(root))
+}
+
 fn codex_notify_script(worktree_path: &Path) -> Result<PathBuf> {
-    let repo_root = task_git::repo_root_from(worktree_path)?;
+    let repo_root = repo_root_from(worktree_path)?;
     let path = repo_root
         .join("projects")
         .join("crank")
@@ -388,7 +406,7 @@ fn codex_notify_script(worktree_path: &Path) -> Result<PathBuf> {
 }
 
 fn claude_plugin_dir(worktree_path: &Path) -> Result<PathBuf> {
-    let repo_root = task_git::repo_root_from(worktree_path)?;
+    let repo_root = repo_root_from(worktree_path)?;
     let path = repo_root
         .join("projects")
         .join("crank")

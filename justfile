@@ -37,6 +37,7 @@ lint: nix-check
 # Run E2E tests (requires release build)
 test-e2e: nix-check build
     ./tests/e2e/test-merge.sh
+    ./tests/e2e/test-workflow.sh
 
 # Pre-merge checks
 pre-merge: check lint test build test-e2e

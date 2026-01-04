@@ -16,6 +16,9 @@ struct TaskFrontmatter {
     status: Option<String>,
     title: Option<String>,
     depends_on: Option<Vec<Dependency>>,
+    workflow: Option<String>,
+    step_id: Option<String>,
+    run: Option<String>,
     coding_agent: Option<String>,
     created: Option<NaiveDate>,
 }
@@ -51,6 +54,7 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         .with_context(|| format!("failed to read task file: {}", path.display()))?;
 
     let (frontmatter, title_fallback) = parse_frontmatter(&content)?;
+    let body_run = extract_run_command(&content);
     let id = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -70,6 +74,13 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         status: frontmatter.status.unwrap_or_default(),
         title,
         depends_on: frontmatter.depends_on.unwrap_or_default(),
+        workflow: frontmatter
+            .workflow
+            .filter(|value| !value.trim().is_empty()),
+        step_id: frontmatter.step_id.filter(|value| !value.trim().is_empty()),
+        run: body_run
+            .or(frontmatter.run)
+            .filter(|value| !value.trim().is_empty()),
         coding_agent: frontmatter
             .coding_agent
             .unwrap_or_else(|| "opencode".to_string()),
@@ -115,6 +126,41 @@ fn parse_frontmatter(content: &str) -> Result<(TaskFrontmatter, Option<String>)>
     let frontmatter = frontmatter_lines.join("\n");
     let parsed: TaskFrontmatter = serde_yaml::from_str(&frontmatter)?;
     Ok((parsed, title_fallback))
+}
+
+fn extract_run_command(content: &str) -> Option<String> {
+    let mut in_run_section = false;
+    let mut in_code_block = false;
+    let mut lines = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == "### Run" {
+            in_run_section = true;
+            continue;
+        }
+
+        if in_run_section {
+            if trimmed.starts_with("```") {
+                if in_code_block {
+                    break;
+                } else {
+                    in_code_block = true;
+                    continue;
+                }
+            }
+
+            if in_code_block {
+                lines.push(line);
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n").trim().to_string())
+    }
 }
 
 pub fn task_template(
@@ -246,7 +292,7 @@ fn update_frontmatter_field(task_path: &Path, key: &str, value: &str) -> Result<
     Ok(())
 }
 
-fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
+pub(crate) fn ensure_git_exclude(git_root: &Path, pattern: &str) -> Result<()> {
     let git_dir = crate::task::git::git_common_dir_from(git_root)?;
     let exclude_path = git_dir.join("info").join("exclude");
     if let Some(parent) = exclude_path.parent() {
@@ -544,10 +590,19 @@ app: reader-rs
 title: Test Task
 priority: 3
 status: open
+workflow: review-flow
+step_id: implement
 created: 2024-12-30
 ---
 
 ## Intent
+
+## Spec
+
+### Run
+```bash
+crank merge
+```
 "#;
         fs::write(&path, content).unwrap();
 
@@ -557,6 +612,9 @@ created: 2024-12-30
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.priority, 3);
         assert_eq!(task.status, "open");
+        assert_eq!(task.workflow.as_deref(), Some("review-flow"));
+        assert_eq!(task.step_id.as_deref(), Some("implement"));
+        assert_eq!(task.run.as_deref(), Some("crank merge"));
         assert_eq!(task.coding_agent, "opencode");
         assert_eq!(
             task.created,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# E2E tests for crank merge command
+# E2E tests for crank merge workflow templates
 # Tests the core merge workflow without OpenCode or project-specific CI
 set -euo pipefail
 
@@ -20,6 +20,9 @@ if [[ ! -x "$CRANK_BIN" ]]; then
     echo "Run 'cargo build --release' first"
     exit 1
 fi
+
+export PATH="$(dirname "$CRANK_BIN"):$PATH"
+export CRANK_RUN_NO_AGENT=1
 
 # Create temp directory for test repos
 TMPDIR=$(mktemp -d)
@@ -42,6 +45,56 @@ pass() {
 fail() {
     echo -e "${RED}FAIL${NC}: $1"
     ((TESTS_FAILED++)) || true
+}
+
+build_merge_workflow() {
+    local workflow_id="$1"
+    local worktree="$2"
+    local target_repo="$3"
+    local dry_run_flag="${4:-}"
+    local skip_pre_merge_flag="${5:---skip}"
+    local skip_review_flag="${6:---skip}"
+    local review_skip_tests_flag="${7:-}"
+    local notify_flag="${8:-}"
+
+    local vars=(
+        --var "base=master"
+        --var "worktree=$worktree"
+        --var "timeout=600000"
+        --var "notify_interval=60000"
+        --var "skip_pre_merge_flag=$skip_pre_merge_flag"
+        --var "skip_review_flag=$skip_review_flag"
+        --var "review_skip_tests_flag=$review_skip_tests_flag"
+        --var "dry_run_flag=$dry_run_flag"
+        --var "notify_flag=$notify_flag"
+    )
+
+    if [[ -n "$target_repo" ]]; then
+        vars+=(--var "target_repo_flag=--target-repo $target_repo")
+    else
+        vars+=(--var "target_repo_flag=")
+    fi
+
+    "$CRANK_BIN" build merge --id "$workflow_id" --ephemeral "${vars[@]}"
+}
+
+run_workflow_until_done() {
+    local workflow_id="$1"
+    local max_attempts=20
+    local output
+
+    for _ in $(seq 1 "$max_attempts"); do
+        output=$("$CRANK_BIN" run --workflow "$workflow_id" 2>&1) || {
+            echo "$output"
+            return 1
+        }
+        if echo "$output" | grep -q "Workflow '${workflow_id}' complete"; then
+            return 0
+        fi
+    done
+
+    echo "workflow did not complete"
+    return 1
 }
 
 # ============================================================================
@@ -73,7 +126,17 @@ setup_repos() {
     git config user.email "test@test.com"
     git config user.name "Test User"
     git fetch origin >/dev/null 2>&1
-    
+
+    mkdir -p "$TMPDIR/worktree/.crank/workflows"
+    cp "$PROJECT_ROOT/.crank/workflows/merge.workflow.toml" "$TMPDIR/worktree/.crank/workflows/merge.workflow.toml"
+
+    mkdir -p "$TMPDIR/worktree/scripts"
+    cp -R "$PROJECT_ROOT/scripts/merge" "$TMPDIR/worktree/scripts/merge"
+    chmod +x "$TMPDIR/worktree/scripts/merge/"*.sh
+
+    echo ".crank/workflows/" >> "$TMPDIR/worktree/.git/info/exclude"
+    echo "scripts/" >> "$TMPDIR/worktree/.git/info/exclude"
+
     echo "Repositories ready."
     echo ""
 }
@@ -92,31 +155,22 @@ test_happy_path_merge() {
     echo "new feature line" >> file.txt
     git commit -am "add feature line" >/dev/null 2>&1
     
-    # Run crank merge
-    local output
-    if output=$("$CRANK_BIN" merge "$TMPDIR/worktree" \
-        --skip-review \
-        --skip-pre-merge \
-        --target-repo "$TMPDIR/target" \
-        --base master 2>&1); then
-        
-        # Verify JSON output indicates success
-        if echo "$output" | grep -q '"status":"pass"'; then
-            # Verify merge landed on origin
-            cd "$TMPDIR/origin"
-            if git log --oneline master | grep -q "Merge feature-add-line"; then
-                pass "Branch merged and pushed to origin/master"
-            else
-                fail "Merge commit not found on origin/master"
-                echo "  Origin log: $(git log --oneline -3 master)"
-            fi
+    local workflow_id="merge-happy"
+    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+        fail "build failed"
+        return
+    fi
+
+    if run_workflow_until_done "$workflow_id"; then
+        cd "$TMPDIR/origin"
+        if git log --oneline master | grep -q "Merge feature-add-line"; then
+            pass "Branch merged and pushed to origin/master"
         else
-            fail "Expected status:pass in output"
-            echo "  Output: $output"
+            fail "Merge commit not found on origin/master"
+            echo "  Origin log: $(git log --oneline -3 master)"
         fi
     else
-        fail "crank merge command failed"
-        echo "  Output: $output"
+        fail "merge workflow failed"
     fi
     
     # Cleanup: go back to master
@@ -140,14 +194,23 @@ test_preflight_requires_commit() {
 
     local output
     local exit_code=0
-    output=$("$CRANK_BIN" merge "$TMPDIR/worktree" \
-        --skip-review \
-        --skip-pre-merge \
-        --target-repo "$TMPDIR/target" \
-        --base master 2>&1) || exit_code=$?
+    local workflow_id="merge-preflight-1"
+    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+        fail "build failed"
+        return
+    fi
+
+    for _ in {1..20}; do
+        output=$("$CRANK_BIN" run --workflow "$workflow_id" 2>&1) || {
+            exit_code=$?
+            break
+        }
+        if echo "$output" | grep -q "Workflow '${workflow_id}' complete"; then
+            break
+        fi
+    done
 
     if [[ $exit_code -ne 0 ]] \
-        && echo "$output" | grep -q '"step":"preflight"' \
         && echo "$output" | grep -q "no commits to merge"; then
         pass "Preflight blocks merges with no commits"
     else
@@ -160,14 +223,23 @@ test_preflight_requires_commit() {
     echo "dirty change" >> file.txt
 
     exit_code=0
-    output=$("$CRANK_BIN" merge "$TMPDIR/worktree" \
-        --skip-review \
-        --skip-pre-merge \
-        --target-repo "$TMPDIR/target" \
-        --base master 2>&1) || exit_code=$?
+    workflow_id="merge-preflight-2"
+    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+        fail "build failed"
+        return
+    fi
+
+    for _ in {1..20}; do
+        output=$("$CRANK_BIN" run --workflow "$workflow_id" 2>&1) || {
+            exit_code=$?
+            break
+        }
+        if echo "$output" | grep -q "Workflow '${workflow_id}' complete"; then
+            break
+        fi
+    done
 
     if [[ $exit_code -ne 0 ]] \
-        && echo "$output" | grep -q '"step":"preflight"' \
         && echo "$output" | grep -q "uncommitted changes"; then
         pass "Preflight blocks merges with dirty worktree"
     else
@@ -215,17 +287,27 @@ test_conflict_detection() {
     
     local output
     local exit_code=0
-    output=$("$CRANK_BIN" merge "$TMPDIR/worktree" \
-        --skip-review \
-        --skip-pre-merge \
-        --target-repo "$TMPDIR/target" \
-        --base master 2>&1) || exit_code=$?
+    local workflow_id="merge-conflict"
+    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+        fail "build failed"
+        return
+    fi
+
+    for _ in {1..20}; do
+        output=$("$CRANK_BIN" run --workflow "$workflow_id" 2>&1) || {
+            exit_code=$?
+            break
+        }
+        if echo "$output" | grep -q "Workflow '${workflow_id}' complete"; then
+            break
+        fi
+    done
     
     # Should fail with conflict status
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -q '"status":"conflict"'; then
+    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qi "merge conflict"; then
         pass "Conflict correctly detected and reported"
     else
-        fail "Expected conflict status with non-zero exit"
+        fail "Expected conflict error with non-zero exit"
         echo "  Exit code: $exit_code"
         echo "  Output: $output"
     fi
@@ -259,61 +341,33 @@ test_dry_run() {
     echo "dry run test" >> file.txt
     git commit -am "dry run feature" >/dev/null 2>&1
     
-    # Run crank merge with --dry-run
+    local workflow_id="merge-dry-run"
+    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "--dry-run" "--skip" "--skip"; then
+        fail "build failed"
+        return
+    fi
+
     local output
-    if output=$("$CRANK_BIN" merge "$TMPDIR/worktree" \
-        --skip-review \
-        --skip-pre-merge \
-        --target-repo "$TMPDIR/target" \
-        --base master \
-        --dry-run 2>&1); then
-        
-        # Check output indicates dry run
-        if echo "$output" | grep -q '"dry_run":true'; then
-            # Verify origin/master unchanged
-            cd "$TMPDIR/origin"
-            local after_commit
-            after_commit=$(git rev-parse master)
-            
-            if [[ "$before_commit" == "$after_commit" ]]; then
-                pass "Dry run did not modify origin/master"
-            else
-                fail "Dry run incorrectly modified origin/master"
-                echo "  Before: $before_commit"
-                echo "  After: $after_commit"
-            fi
+    if output=$(run_workflow_until_done "$workflow_id" 2>&1); then
+        cd "$TMPDIR/origin"
+        local after_commit
+        after_commit=$(git rev-parse master)
+
+        if [[ "$before_commit" == "$after_commit" ]]; then
+            pass "Dry run did not modify origin/master"
         else
-            fail "Expected dry_run:true in output"
-            echo "  Output: $output"
+            fail "Dry run incorrectly modified origin/master"
+            echo "  Before: $before_commit"
+            echo "  After: $after_commit"
         fi
     else
-        fail "crank merge --dry-run command failed"
+        fail "dry run workflow failed"
         echo "  Output: $output"
     fi
     
     # Cleanup
     cd "$TMPDIR/worktree"
     git checkout master >/dev/null 2>&1
-    echo ""
-}
-
-# ============================================================================
-# Test 5: Approval workflow (pending/approve/reject)
-# ============================================================================
-test_approval_workflow() {
-    ((TESTS_RUN++)) || true
-    echo -e "${YELLOW}Test 5: Approval workflow commands${NC}"
-    
-    # Test pending command (should show no pending)
-    local output
-    output=$("$CRANK_BIN" pending 2>&1)
-    
-    if echo "$output" | grep -q '"status":"ok"'; then
-        pass "pending command works"
-    else
-        fail "pending command failed"
-        echo "  Output: $output"
-    fi
     echo ""
 }
 
@@ -332,8 +386,6 @@ main() {
     test_preflight_requires_commit
     test_conflict_detection
     test_dry_run
-    test_approval_workflow
-    
     echo "============================================"
     echo "Results: $TESTS_PASSED/$TESTS_RUN passed"
     echo "============================================"

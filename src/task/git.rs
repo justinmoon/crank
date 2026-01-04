@@ -31,25 +31,6 @@ pub fn repo_root() -> Result<PathBuf> {
     Ok(PathBuf::from(root))
 }
 
-#[allow(dead_code)]
-pub fn repo_root_from(path: &Path) -> Result<PathBuf> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .context("failed to run git rev-parse for common dir")?;
-    if !output.status.success() {
-        return Err(anyhow!("not in a git repository"));
-    }
-    let mut root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if root.ends_with(".git") {
-        root = root.trim_end_matches(".git").to_string();
-        root = root.trim_end_matches('/').to_string();
-    }
-    Ok(PathBuf::from(root))
-}
-
 pub fn task_path_for_id(git_root: &Path, task_id: &str) -> PathBuf {
     git_root.join(".crank").join(format!("{task_id}.md"))
 }

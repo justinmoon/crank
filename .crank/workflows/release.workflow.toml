@@ -1,0 +1,33 @@
+workflow = "release"
+version = 1
+description = "Release crank"
+
+[vars]
+version = { required = true }
+
+[[steps]]
+id = "prep"
+title = "Prepare release {{version}}"
+
+[[steps]]
+id = "checks"
+title = "Run checks"
+run = "just pre-merge"
+needs = ["prep"]
+
+[[steps]]
+id = "tag"
+title = "Tag v{{version}}"
+run = "git tag -a v{{version}} -m \"v{{version}}\" && git push origin master --tags"
+needs = ["checks"]
+
+[[steps]]
+id = "publish"
+title = "Build release {{version}}"
+run = "cargo build --release"
+needs = ["tag"]
+
+[[steps]]
+id = "verify"
+title = "Verify release {{version}}"
+needs = ["publish"]
