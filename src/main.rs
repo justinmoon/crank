@@ -6,7 +6,6 @@ mod crank_io;
 mod git;
 mod opencode;
 
-
 #[path = "autopilot/mod.rs"]
 mod orchestrator;
 mod run;
