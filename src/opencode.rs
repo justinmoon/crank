@@ -42,13 +42,7 @@ pub struct ReviewResult {
 
 /// Send a prompt using the opencode CLI with the review agent.
 /// Each review spawns its own opencode process in the target directory.
-/// If progress is provided, streams events to the merge log.
-async fn send_review_prompt(
-    directory: &str,
-    prompt: &str,
-    timeout_ms: u64,
-    progress: Option<Arc<Mutex<MergeProgress>>>,
-) -> Result<String> {
+async fn send_review_prompt(directory: &str, prompt: &str, timeout_ms: u64) -> Result<String> {
     let mut child = Command::new("opencode")
         .arg("run")
         .arg("--format")
@@ -65,31 +59,8 @@ async fn send_review_prompt(
     let mut reader = BufReader::new(stdout).lines();
 
     let mut all_output = Vec::new();
-    let mut session_id_captured = false;
-
     let read_output = async {
         while let Ok(Some(line)) = reader.next_line().await {
-            // Extract session ID from first event
-            if !session_id_captured {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                    if let Some(sid) = json.get("sessionID").and_then(|v| v.as_str()) {
-                        if let Some(ref p) = progress {
-                            let mut guard = p.lock().await;
-                            guard.set_session_id("review", sid);
-                        }
-                        session_id_captured = true;
-                    }
-                }
-            }
-
-            // Log to progress if available
-            if let Some(ref p) = progress {
-                let summary = summarize_opencode_event(&line);
-                if !summary.is_empty() {
-                    let mut guard = p.lock().await;
-                    guard.append_output("review", &summary);
-                }
-            }
             all_output.push(line);
         }
         child.wait().await
@@ -117,91 +88,6 @@ async fn send_review_prompt(
             let _ = child.kill().await;
             Err(anyhow::anyhow!("opencode run timed out"))
         }
-    }
-}
-
-/// Summarize an opencode JSON event for logging
-fn summarize_opencode_event(json_line: &str) -> String {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_line) {
-        let event_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-        match event_type {
-            "step_start" => "--- review step started ---".to_string(),
-            "step_finish" => {
-                let reason = json
-                    .pointer("/part/reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("done");
-                format!("--- step finished: {} ---", reason)
-            }
-            "tool_use" => {
-                let tool = json
-                    .pointer("/part/tool")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                let state = json
-                    .pointer("/part/state/status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let input = json.pointer("/part/state/input");
-
-                if state == "pending" {
-                    if let Some(input) = input {
-                        if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
-                            return format!(
-                                "[{}] $ {}",
-                                tool,
-                                cmd.chars().take(100).collect::<String>()
-                            );
-                        }
-                        if let Some(pattern) = input.get("pattern").and_then(|v| v.as_str()) {
-                            return format!("[{}] searching: {}", tool, pattern);
-                        }
-                        if let Some(path) = input.get("filePath").and_then(|v| v.as_str()) {
-                            return format!("[{}] reading: {}", tool, path);
-                        }
-                        if let Some(desc) = input.get("description").and_then(|v| v.as_str()) {
-                            return format!("[{}] {}", tool, desc);
-                        }
-                    }
-                    format!("[{}] ...", tool)
-                } else if state == "completed" {
-                    // Show brief output summary for completed tools
-                    if let Some(output) =
-                        json.pointer("/part/state/output").and_then(|v| v.as_str())
-                    {
-                        let lines: Vec<&str> = output.lines().collect();
-                        if lines.len() > 1 {
-                            return format!("[{}] done ({} lines)", tool, lines.len());
-                        } else if !output.trim().is_empty() {
-                            let short: String = output.trim().chars().take(80).collect();
-                            return format!("[{}] -> {}", tool, short);
-                        }
-                    }
-                    String::new()
-                } else {
-                    String::new()
-                }
-            }
-            "text" => {
-                // Extract actual text content - this is the model's response
-                if let Some(text) = json.pointer("/part/text").and_then(|v| v.as_str()) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        // Show each line of the response
-                        return trimmed
-                            .lines()
-                            .map(|line| format!(">>> {}", line))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                    }
-                }
-                String::new()
-            }
-            _ => String::new(),
-        }
-    } else {
-        String::new()
     }
 }
 
@@ -305,10 +191,6 @@ fn parse_review_output(output: &str) -> ReviewResult {
     }
 }
 
-use crate::git::MergeProgress;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 /// Run a review using opencode's review agent.
 /// Each review spawns its own opencode process - no shared server needed.
 pub async fn run_review(
@@ -316,15 +198,9 @@ pub async fn run_review(
     _branch: &str,
     skip_tests: bool,
     timeout_ms: u64,
-    progress: Option<Arc<Mutex<MergeProgress>>>,
 ) -> ReviewStepResult {
     let start = std::time::Instant::now();
     let directory = git_root.to_string_lossy();
-
-    if let Some(ref p) = progress {
-        let mut guard = p.lock().await;
-        guard.start_step("review");
-    }
 
     let test_instructions = if skip_tests {
         "Tests have already been run by pre-merge, skip running tests."
@@ -334,26 +210,16 @@ pub async fn run_review(
 
     let prompt = REVIEW_PROMPT.replace("{test_instructions}", test_instructions);
 
-    let result = send_review_prompt(&directory, &prompt, timeout_ms, progress.clone()).await;
+    let result = send_review_prompt(&directory, &prompt, timeout_ms).await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let step_result = match result {
         Ok(response) => {
             let review = parse_review_output(&response);
-            if let Some(ref p) = progress {
-                let mut guard = p.lock().await;
-                guard.finish_step("review", &review.status, review.reason.clone());
-            }
             ReviewStepResult::new("review", &review.status, review.reason, Some(duration_ms))
         }
-        Err(e) => {
-            if let Some(ref p) = progress {
-                let mut guard = p.lock().await;
-                guard.finish_step("review", "fail", Some(e.to_string()));
-            }
-            ReviewStepResult::new("review", "fail", Some(e.to_string()), Some(duration_ms))
-        }
+        Err(e) => ReviewStepResult::new("review", "fail", Some(e.to_string()), Some(duration_ms)),
     };
 
     step_result
@@ -365,7 +231,7 @@ pub async fn review_command(worktree: &str, skip_tests: bool, timeout_ms: u64) -
     let git_root = crate::git::get_git_root(&worktree_path).await?;
     let branch = crate::git::get_current_branch(&git_root).await?;
 
-    let result = run_review(&git_root, &branch, skip_tests, timeout_ms, None).await;
+    let result = run_review(&git_root, &branch, skip_tests, timeout_ms).await;
 
     println!(
         "{}",

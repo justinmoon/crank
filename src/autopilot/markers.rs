@@ -13,12 +13,6 @@ pub fn read_current_task_id(repo_root: &Path) -> Result<String> {
         .ok_or_else(|| anyhow!("current task marker is empty: {}", marker.display()))
 }
 
-pub fn write_merged_marker(task_id: &str) -> Result<PathBuf> {
-    let path = merged_marker_path(task_id)?;
-    write_marker(&path, "merged")?;
-    Ok(path)
-}
-
 pub fn write_help_marker(task_id: &str, message: &str) -> Result<PathBuf> {
     let path = help_marker_path(task_id)?;
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
