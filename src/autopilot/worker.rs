@@ -374,8 +374,26 @@ fn run_direnv_allow(worktree_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn repo_root_from(path: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .context("failed to run git rev-parse for common dir")?;
+    if !output.status.success() {
+        return Err(anyhow!("not in a git repository"));
+    }
+    let mut root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.ends_with(".git") {
+        root = root.trim_end_matches(".git").to_string();
+        root = root.trim_end_matches('/').to_string();
+    }
+    Ok(PathBuf::from(root))
+}
+
 fn codex_notify_script(worktree_path: &Path) -> Result<PathBuf> {
-    let repo_root = task_git::repo_root_from(worktree_path)?;
+    let repo_root = repo_root_from(worktree_path)?;
     let path = repo_root
         .join("projects")
         .join("crank")
@@ -388,7 +406,7 @@ fn codex_notify_script(worktree_path: &Path) -> Result<PathBuf> {
 }
 
 fn claude_plugin_dir(worktree_path: &Path) -> Result<PathBuf> {
-    let repo_root = task_git::repo_root_from(worktree_path)?;
+    let repo_root = repo_root_from(worktree_path)?;
     let path = repo_root
         .join("projects")
         .join("crank")

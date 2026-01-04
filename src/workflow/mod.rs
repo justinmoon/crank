@@ -56,11 +56,9 @@ pub struct WorkflowRunArgs {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct WorkflowTemplate {
     workflow: String,
     version: u32,
-    description: Option<String>,
     vars: Option<HashMap<String, VarDef>>,
     steps: Vec<WorkflowStep>,
 }
@@ -351,6 +349,10 @@ fn validate_template(template: &WorkflowTemplate, expected_name: &str) -> Result
             "workflow name mismatch: expected '{expected_name}', got '{}'",
             template.workflow
         ));
+    }
+
+    if template.version == 0 {
+        return Err(anyhow!("workflow version must be >= 1"));
     }
 
     if template.steps.is_empty() {
