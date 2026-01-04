@@ -133,7 +133,15 @@ fn extract_response_text(json_events: &str) -> String {
             continue;
         }
 
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        let payload = trimmed
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
             let text = collect_text_from_value(&json);
             if !text.is_empty() {
                 parts.push(text);
