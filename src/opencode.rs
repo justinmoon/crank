@@ -214,15 +214,13 @@ pub async fn run_review(
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    let step_result = match result {
+    match result {
         Ok(response) => {
             let review = parse_review_output(&response);
             ReviewStepResult::new("review", &review.status, review.reason, Some(duration_ms))
         }
         Err(e) => ReviewStepResult::new("review", "fail", Some(e.to_string()), Some(duration_ms)),
-    };
-
-    step_result
+    }
 }
 
 /// Review command (standalone)
