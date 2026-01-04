@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod agentsmd;
 mod approval;
 mod autopilot;
 mod git;
@@ -140,6 +141,10 @@ enum Commands {
     /// List pending merges awaiting approval
     Pending,
 
+    /// Print AGENTS.md-style guide for crank
+    #[command(name = "agentsmd")]
+    AgentsMd,
+
     /// Show status of active merge operations
     Status {
         /// Watch mode - continuously update
@@ -215,6 +220,10 @@ async fn main() -> Result<()> {
 
         Commands::Pending => {
             approval::pending_command().await?;
+        }
+
+        Commands::AgentsMd => {
+            agentsmd::print_agentsmd();
         }
 
         Commands::Status { watch, follow } => {
