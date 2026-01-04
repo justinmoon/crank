@@ -61,7 +61,9 @@ impl Task {
 }
 
 pub fn matches_task_id(task_id: &str, dep_id: &str) -> bool {
-    task_id == dep_id || task_id.starts_with(dep_id) || dep_id.starts_with(task_id)
+    let task = normalize_task_id(task_id);
+    let dep = normalize_task_id(dep_id);
+    !task.is_empty() && task == dep
 }
 
 pub fn normalize_task_id(arg: &str) -> String {
