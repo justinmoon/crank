@@ -56,6 +56,7 @@ pub struct WorkflowRunArgs {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct WorkflowTemplate {
     workflow: String,
     version: u32,
@@ -408,7 +409,7 @@ pub async fn run_workflow_at(git_root: &Path, id: &str, concurrency: usize) -> R
     }
 
     loop {
-        let tasks = store::load_tasks(&git_root)?;
+        let tasks = store::load_tasks(git_root)?;
         let workflow_tasks: Vec<model::Task> = tasks
             .iter()
             .filter(|task| task.workflow.as_deref() == Some(id))

@@ -68,11 +68,13 @@ pub fn now_ms_pub() -> u64 {
     now_ms()
 }
 
+#[allow(dead_code)]
 fn generate_merge_id() -> String {
     format!("{:08x}", rand::random::<u32>())
 }
 
 impl MergeProgress {
+    #[allow(dead_code)]
     fn new(branch: &str, base: &str, worktree: &str) -> Self {
         Self {
             id: generate_merge_id(),
@@ -173,6 +175,7 @@ impl MergeProgress {
         self.write();
     }
 
+    #[allow(dead_code)]
     fn finish(&mut self, status: &str) {
         self.status = status.to_string();
         self.finished_at = Some(now_ms());
@@ -302,7 +305,9 @@ pub async fn merge_review(worktree_path: &Path, skip_tests: bool, timeout_ms: u6
 
 pub async fn merge_conflicts(worktree_path: &Path, base_branch: &str) -> Result<Vec<String>> {
     let git_root = get_git_root(worktree_path).await?;
-    check_conflicts(&git_root, base_branch).await
+    git(&git_root, &["fetch", "origin", base_branch]).await?;
+    let base_ref = format!("origin/{base_branch}");
+    check_conflicts(&git_root, &base_ref).await
 }
 
 pub async fn merge_apply(
@@ -328,6 +333,7 @@ pub struct StepResult {
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
+#[allow(dead_code)]
 enum MergeOutput {
     Step(StepResult),
     Conflict {
@@ -370,6 +376,7 @@ enum MergeOutput {
     },
 }
 
+#[allow(dead_code)]
 fn output(data: &impl Serialize) {
     println!("{}", serde_json::to_string(data).unwrap());
 }
@@ -454,9 +461,9 @@ pub async fn get_head_commit(cwd: &Path) -> Result<String> {
 }
 
 /// Check for merge conflicts using git merge-tree
-async fn check_conflicts(cwd: &Path, base_branch: &str) -> Result<Vec<String>> {
+async fn check_conflicts(cwd: &Path, base_ref: &str) -> Result<Vec<String>> {
     let (stdout, stderr, code) =
-        git_result(cwd, &["merge-tree", "--write-tree", base_branch, "HEAD"]).await;
+        git_result(cwd, &["merge-tree", "--write-tree", base_ref, "HEAD"]).await;
 
     if code == 0 {
         return Ok(vec![]);
@@ -498,6 +505,7 @@ pub async fn get_main_worktree(cwd: &Path) -> Result<PathBuf> {
 }
 
 /// Run just pre-merge with streaming output
+#[allow(dead_code)]
 async fn run_pre_merge(
     cwd: &Path,
     timeout_ms: u64,
@@ -736,6 +744,7 @@ async fn merge_and_push(
 }
 
 /// Main merge command
+#[allow(dead_code)]
 pub async fn merge_command(opts: MergeOptions) -> Result<()> {
     let start = std::time::Instant::now();
     let worktree_path = std::fs::canonicalize(&opts.worktree)?;
@@ -846,7 +855,9 @@ pub async fn merge_command(opts: MergeOptions) -> Result<()> {
     }
 
     // Check conflicts
-    let conflicts = check_conflicts(&git_root, &opts.base).await?;
+    let base_ref = format!("origin/{}", opts.base);
+    git(&git_root, &["fetch", "origin", &opts.base]).await?;
+    let conflicts = check_conflicts(&git_root, &base_ref).await?;
     if !conflicts.is_empty() {
         output(&MergeOutput::Conflict {
             status: "conflict".to_string(),
