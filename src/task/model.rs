@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const TASK_STATUS_OPEN: &str = "open";
 pub const TASK_STATUS_IN_PROGRESS: &str = "in_progress";
+#[allow(dead_code)]
 pub const TASK_STATUS_NEEDS_HUMAN: &str = "needs_human";
 pub const TASK_STATUS_CLOSED: &str = "closed";
 

@@ -277,10 +277,6 @@ impl AgentSession {
         Ok(false)
     }
 
-    fn replace_child(&mut self, child: Child) {
-        self.child = Some(child);
-    }
-
     fn restart_child(
         &mut self,
         task: &Task,
