@@ -4,10 +4,10 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::orchestrator::{controls, logging::Logger, markers, opencode};
 use crate::task::branch;
-use crate::task::{claim_next_task, clear_active_claim};
 use crate::task::git as task_git;
 use crate::task::model::{Task, TASK_STATUS_CLOSED, TASK_STATUS_NEEDS_HUMAN};
 use crate::task::store;
+use crate::task::{claim_next_task, clear_active_claim};
 use anyhow::{anyhow, Context, Result};
 
 const MAX_BRANCH_LEN: usize = 20;
@@ -364,9 +364,7 @@ fn build_prompt(task: &Task, worktree_path: &Path) -> Result<String> {
 }
 
 fn write_task_alias(task: &Task, worktree_path: &Path) -> Result<()> {
-    let source = worktree_path
-        .join(".crank")
-        .join(format!("{}.md", task.id));
+    let source = worktree_path.join(".crank").join(format!("{}.md", task.id));
     if !source.exists() {
         return Ok(());
     }

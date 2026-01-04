@@ -173,12 +173,12 @@ async fn main() -> Result<()> {
 
         Commands::Done { task } => {
             let repo_root = task::git::git_root()?;
-            let task_id = if let Some(task_id) = task.or_else(|| std::env::var("CRANK_TASK_ID").ok())
-            {
-                task_id
-            } else {
-                orchestrator::markers::read_current_task_id(&repo_root)?
-            };
+            let task_id =
+                if let Some(task_id) = task.or_else(|| std::env::var("CRANK_TASK_ID").ok()) {
+                    task_id
+                } else {
+                    orchestrator::markers::read_current_task_id(&repo_root)?
+                };
             let path = orchestrator::markers::write_merged_marker(&task_id)?;
             let task_path = task::git::task_path_for_id(&repo_root, &task_id);
             if task_path.exists() {

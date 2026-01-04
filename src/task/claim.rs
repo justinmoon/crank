@@ -87,8 +87,7 @@ fn claim_next_task_with_lock_dir(
     store::update_task_status(&selected.path, TASK_STATUS_IN_PROGRESS)
         .context("failed to mark task in progress")?;
     selected.status = TASK_STATUS_IN_PROGRESS.to_string();
-    touch_active_claim(repo_root, &selected.id)
-        .context("failed to record active task claim")?;
+    touch_active_claim(repo_root, &selected.id).context("failed to record active task claim")?;
 
     Ok(Some(selected))
 }
