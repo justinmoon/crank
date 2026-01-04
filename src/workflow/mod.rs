@@ -157,7 +157,8 @@ fn build_task_content(
     if let Some(run) = run {
         frontmatter.push_str("\n### Run\n```bash\n");
         frontmatter.push_str(run);
-        frontmatter.push_str("\n```\n\n### Acceptable Output\n- Describe what success looks like.\n");
+        frontmatter
+            .push_str("\n```\n\n### Acceptable Output\n- Describe what success looks like.\n");
     } else {
         frontmatter.push('\n');
     }
@@ -272,11 +273,7 @@ fn manifest_path(git_root: &Path, workflow_id: &str) -> PathBuf {
     repo_templates_dir(git_root).join(format!("{workflow_id}.manifest.toml"))
 }
 
-fn write_manifest_at(
-    git_root: &Path,
-    workflow_id: &str,
-    steps: &[WorkflowStep],
-) -> Result<()> {
+fn write_manifest_at(git_root: &Path, workflow_id: &str, steps: &[WorkflowStep]) -> Result<()> {
     let manifest = WorkflowManifest {
         workflow: workflow_id.to_string(),
         steps: steps.iter().map(|step| step.id.clone()).collect(),

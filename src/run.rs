@@ -4,9 +4,9 @@ use std::process::Command;
 use anyhow::{anyhow, Context, Result};
 use clap::Args;
 
+use crate::task::claim_next_task;
 use crate::task::model::{normalize_task_id, Task, TASK_STATUS_IN_PROGRESS, TASK_STATUS_OPEN};
 use crate::task::{git as task_git, store};
-use crate::task::claim_next_task;
 use crate::workflow;
 
 #[derive(Args, Clone)]
@@ -30,8 +30,8 @@ pub fn run_command(args: RunArgs) -> Result<()> {
     }
 
     if let Some(task_id) = args.task_id {
-        let task = find_task(&tasks, &task_id)
-            .ok_or_else(|| anyhow!("task not found: {task_id}"))?;
+        let task =
+            find_task(&tasks, &task_id).ok_or_else(|| anyhow!("task not found: {task_id}"))?;
         return run_selected_task(&git_root, &tasks, &task);
     }
 
@@ -95,7 +95,12 @@ fn run_selected_task(git_root: &Path, tasks: &[Task], task: &Task) -> Result<()>
     store::write_current_task_marker(git_root, &task.id)?;
     store::update_task_status(&task.path, TASK_STATUS_IN_PROGRESS)?;
 
-    match task.run.as_deref().map(str::trim).filter(|run| !run.is_empty()) {
+    match task
+        .run
+        .as_deref()
+        .map(str::trim)
+        .filter(|run| !run.is_empty())
+    {
         Some(run) => run_command_step(git_root, task, run),
         None => run_agent_step(git_root, task),
     }
@@ -203,17 +208,12 @@ fn workflow_order(
     Ok(steps)
 }
 
-fn current_task_for_workflow(
-    git_root: &Path,
-    tasks: &[Task],
-    workflow_id: &str,
-) -> Option<Task> {
+fn current_task_for_workflow(git_root: &Path, tasks: &[Task], workflow_id: &str) -> Option<Task> {
     let current_id = read_current_task_id(git_root)?;
     tasks
         .iter()
         .find(|task| {
-            task.workflow.as_deref() == Some(workflow_id)
-                && task::ids_match(&task.id, &current_id)
+            task.workflow.as_deref() == Some(workflow_id) && task::ids_match(&task.id, &current_id)
         })
         .cloned()
 }
@@ -248,9 +248,8 @@ fn run_agent_step(git_root: &Path, task: &Task) -> Result<()> {
     }
 
     let rel_path = format!(".crank/{}.md", task.id);
-    let prompt = format!(
-        "Read {rel_path} and implement it. Ask clarifying questions first if needed."
-    );
+    let prompt =
+        format!("Read {rel_path} and implement it. Ask clarifying questions first if needed.");
 
     let agent = task.coding_agent.trim().to_lowercase();
     let status = if agent == "codex" {
