@@ -182,6 +182,10 @@ fn collect_text_from_value(value: &serde_json::Value) -> String {
 
 /// Parse review output for PASS/FAIL
 fn parse_review_output(output: &str) -> ReviewResult {
+    if let Some(parsed) = parse_review_json(output) {
+        return parsed;
+    }
+
     let first_line = output.lines().next().unwrap_or("").trim();
     let first_line_upper = first_line.to_ascii_uppercase();
 
@@ -227,6 +231,48 @@ fn parse_review_output(output: &str) -> ReviewResult {
         status: "fail".to_string(),
         reason: Some("Could not parse review output".to_string()),
     }
+}
+
+fn parse_review_json(output: &str) -> Option<ReviewResult> {
+    let mut candidates = Vec::new();
+    candidates.extend(
+        output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty()),
+    );
+    candidates.push(output.trim());
+
+    for candidate in candidates {
+        if candidate.is_empty() {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(candidate) else {
+            continue;
+        };
+        let Some(status_value) = json.get("status").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let status = status_value.trim().to_ascii_lowercase();
+        if status == "pass" {
+            return Some(ReviewResult {
+                status: "pass".to_string(),
+                reason: None,
+            });
+        }
+        if status == "fail" {
+            let reason = json
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .or_else(|| json.get("message").and_then(|value| value.as_str()))
+                .unwrap_or("review failed");
+            return Some(ReviewResult {
+                status: "fail".to_string(),
+                reason: Some(reason.to_string()),
+            });
+        }
+    }
+    None
 }
 
 /// Run a review using opencode's review agent.
