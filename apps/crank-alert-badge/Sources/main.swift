@@ -47,7 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateCount() {
         let count = readCount()
-        statusItem?.button?.title = String(count)
+        let color: NSColor = count > 1 ? .systemRed : .labelColor
+        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: color,
+            .font: font,
+        ]
+        statusItem?.button?.attributedTitle = NSAttributedString(
+            string: String(count),
+            attributes: attrs
+        )
     }
 }
 
