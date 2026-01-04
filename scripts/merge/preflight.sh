@@ -34,7 +34,13 @@ if [[ -n "$dirty" ]]; then
   die "worktree has uncommitted changes:\n$dirty"
 fi
 
-ahead=$(git rev-list --count "origin/$base..HEAD")
-if [[ "${ahead}" == "0" ]]; then
-  die "no commits to merge; commit changes before running crank merge"
+base_ref="origin/$base"
+
+ahead=$(git rev-list --count "$base_ref..HEAD")
+if [[ "$ahead" == "0" ]]; then
+  if git merge-base --is-ancestor HEAD "$base_ref"; then
+    echo "No commits to merge; branch already merged into $base_ref"
+    exit 0
+  fi
+  die "no commits to merge; branch is not ahead of $base_ref"
 fi
