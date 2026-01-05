@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pane="${CRANK_MUX_TARGET:-}"
-if [[ -z "$pane" ]]; then
-  pane="${TMUX_PANE:-}"
-fi
+pane="${TMUX_PANE:-}"
 if [[ -z "$pane" ]]; then
   exit 0
 fi

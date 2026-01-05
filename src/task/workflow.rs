@@ -12,6 +12,7 @@ use crate::task::branch;
 use crate::task::claim;
 use crate::task::creator;
 use crate::task::git;
+use crate::task::model::SupervisionMode;
 use crate::task::model::{
     normalize_task_id, sort_tasks, Task, TASK_STATUS_CLOSED, TASK_STATUS_IN_PROGRESS,
 };
@@ -65,7 +66,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
             .ok_or_else(|| anyhow!("task not found: {select}"))?
             .clone()
     } else {
-        let selected_path = tui::run_picker(&tasks, &git_root)?;
+        let selected_path = tui::run_picker(&tasks, &git_root, tui::PickerOptions::default())?;
         if selected_path.is_none() {
             return Ok(());
         }
@@ -108,7 +109,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
     let worktree_path = repo_root.join("worktrees").join(&branch);
 
     if !worktree_path.exists() {
-        fs::create_dir_all(worktree_path.parent().unwrap())
+        crate::crank_io::ensure_dir(worktree_path.parent().unwrap())
             .context("failed to create worktrees dir")?;
 
         let output = Command::new("git")
@@ -133,8 +134,6 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
         println!("Using existing worktree: {}", worktree_path.display());
     }
 
-    store::copy_task_to_worktree(&git_root, &worktree_path, &selected.id)
-        .context("failed to copy task file to worktree")?;
     store::write_current_task_marker(&worktree_path, &selected.id)
         .context("failed to write current task marker")?;
 
@@ -230,6 +229,7 @@ pub fn run_create(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
+    supervision: Option<SupervisionMode>,
     use_editor: bool,
     use_opencode: bool,
     deps: Option<String>,
@@ -247,10 +247,10 @@ pub fn run_create(
     };
 
     if use_editor {
-        return creator::create_task_interactive(&git_root, title, app, priority);
+        return creator::create_task_interactive(&git_root, title, app, priority, supervision);
     }
 
-    creator::create_task_file(&git_root, title, app, priority, &dependencies)
+    creator::create_task_file(&git_root, title, app, priority, supervision, &dependencies)
 }
 
 pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {
@@ -301,11 +301,11 @@ pub fn run_claim(json: bool, project: Option<String>) -> Result<()> {
 pub fn run_hooks_install() -> Result<()> {
     let git_root = git::git_root()?;
     let hooks_dir = git_root.join(".githooks");
-    fs::create_dir_all(&hooks_dir)
+    crate::crank_io::ensure_dir(&hooks_dir)
         .with_context(|| format!("failed to create hooks directory: {}", hooks_dir.display()))?;
 
     let hook_path = hooks_dir.join("commit-msg");
-    fs::write(&hook_path, COMMIT_MSG_HOOK)
+    crate::crank_io::write_string(&hook_path, COMMIT_MSG_HOOK)
         .with_context(|| format!("failed to write commit-msg hook: {}", hook_path.display()))?;
 
     let mut perms = fs::metadata(&hook_path)?.permissions();

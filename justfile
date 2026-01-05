@@ -3,7 +3,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 # Check for nix shell
 [private]
 nix-check:
-    @test -n "$IN_NIX_SHELL" || (echo "Run 'nix develop' first" && exit 1)
+    @test -n "${IN_NIX_SHELL:-}" || (echo "Run 'nix develop' first" && exit 1)
 
 # List available commands
 default:
@@ -38,8 +38,6 @@ lint: nix-check
 test-e2e: nix-check build
     ./tests/e2e/test-merge.sh
     ./tests/e2e/test-workflow.sh
-    ./tests/e2e/test-tmux.sh
-    ./tests/e2e/test-zellij.sh
 
 # Pre-merge checks
 pre-merge: check lint test build test-e2e

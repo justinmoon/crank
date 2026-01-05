@@ -1,12 +1,23 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
-use crate::orchestrator::{markers, mux};
+use crate::orchestrator::markers;
 
-const NUDGE_MESSAGE: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
+const NUDGE_MESSAGE_SUPERVISED: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
+const NUDGE_MESSAGE_UNSUPERVISED: &str =
+    "Continue. Run tests via just; commit changes (clean git status); run the merge workflow until it passes; run crank done when complete.";
 
 pub fn ask_for_help(repo_root: &Path, message: &str) -> Result<PathBuf> {
+    if std::env::var("CRANK_SUPERVISION")
+        .map(|value| value == "unsupervised")
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "crank ask-for-help is disabled in unsupervised mode"
+        ));
+    }
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("help message is required"));
@@ -29,11 +40,14 @@ pub fn pause(repo_root: &Path, clear: bool) -> Result<Option<PathBuf>> {
 
 pub fn nudge(repo_root: &Path, pane: &str) -> Result<()> {
     let task_id = markers::read_current_task_id(repo_root)?;
-    let target = mux::MuxTarget::from_pane_arg(pane)?;
-    nudge_task(&task_id, &target)
+    nudge_task(&task_id, pane)
 }
 
-pub fn nudge_task(task_id: &str, target: &mux::MuxTarget) -> Result<()> {
+pub fn nudge_task(task_id: &str, pane: &str) -> Result<()> {
+    let pane = pane.trim();
+    if pane.is_empty() {
+        return Err(anyhow!("tmux pane is required"));
+    }
     if markers::merged_marker_exists(task_id)? {
         return Ok(());
     }
@@ -45,7 +59,23 @@ pub fn nudge_task(task_id: &str, target: &mux::MuxTarget) -> Result<()> {
     }
 
     markers::touch_activity_marker(task_id)?;
-    mux::send_nudge(target, NUDGE_MESSAGE)?;
+
+    let message = if std::env::var("CRANK_SUPERVISION")
+        .map(|value| value == "unsupervised")
+        .unwrap_or(false)
+    {
+        NUDGE_MESSAGE_UNSUPERVISED
+    } else {
+        NUDGE_MESSAGE_SUPERVISED
+    };
+
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", pane, message, "Enter"])
+        .status()
+        .context("failed to send tmux nudge")?;
+    if !status.success() {
+        return Err(anyhow!("tmux send-keys failed"));
+    }
 
     Ok(())
 }

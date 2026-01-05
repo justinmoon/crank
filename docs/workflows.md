@@ -42,7 +42,8 @@ needs = ["preflight"]
 
 - Build a workflow: `crank build <template> --id <workflow-id> --var key=val`
 - Run next step: `crank run`
-- Run a workflow: `crank run --workflow <workflow-id>`
+- Run a workflow (loops until waiting/complete): `crank run --workflow <workflow-id>`
+- Run a single workflow step: `crank run --workflow <workflow-id> --once`
 
 Apply creates tasks in `.crank/` like:
 - `workflow: <workflow-id>`
@@ -68,6 +69,7 @@ Key steps (in order):
 - `conflicts`: `git merge-tree` check
 - `approval`: optional (only if `--notify`)
 - `merge`: merge + push
+- `tutorial`: generate post-merge tutorial (best-effort)
 
 ## Release workflow
 
