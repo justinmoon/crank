@@ -12,6 +12,7 @@ use crate::task::branch;
 use crate::task::claim;
 use crate::task::creator;
 use crate::task::git;
+use crate::task::model::SupervisionMode;
 use crate::task::model::{
     normalize_task_id, sort_tasks, Task, TASK_STATUS_CLOSED, TASK_STATUS_IN_PROGRESS,
 };
@@ -65,7 +66,7 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
             .ok_or_else(|| anyhow!("task not found: {select}"))?
             .clone()
     } else {
-        let selected_path = tui::run_picker(&tasks, &git_root)?;
+        let selected_path = tui::run_picker(&tasks, &git_root, tui::PickerOptions::default())?;
         if selected_path.is_none() {
             return Ok(());
         }
@@ -228,6 +229,7 @@ pub fn run_create(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
+    supervision: Option<SupervisionMode>,
     use_editor: bool,
     use_opencode: bool,
     deps: Option<String>,
@@ -245,10 +247,10 @@ pub fn run_create(
     };
 
     if use_editor {
-        return creator::create_task_interactive(&git_root, title, app, priority);
+        return creator::create_task_interactive(&git_root, title, app, priority, supervision);
     }
 
-    creator::create_task_file(&git_root, title, app, priority, &dependencies)
+    creator::create_task_file(&git_root, title, app, priority, supervision, &dependencies)
 }
 
 pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {

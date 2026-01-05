@@ -5,9 +5,19 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::orchestrator::markers;
 
-const NUDGE_MESSAGE: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
+const NUDGE_MESSAGE_SUPERVISED: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
+const NUDGE_MESSAGE_UNSUPERVISED: &str =
+    "Continue. Run tests via just; commit changes (clean git status); run the merge workflow until it passes; run crank done when complete.";
 
 pub fn ask_for_help(repo_root: &Path, message: &str) -> Result<PathBuf> {
+    if std::env::var("CRANK_SUPERVISION")
+        .map(|value| value == "unsupervised")
+        .unwrap_or(false)
+    {
+        return Err(anyhow!(
+            "crank ask-for-help is disabled in unsupervised mode"
+        ));
+    }
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("help message is required"));
@@ -50,8 +60,17 @@ pub fn nudge_task(task_id: &str, pane: &str) -> Result<()> {
 
     markers::touch_activity_marker(task_id)?;
 
+    let message = if std::env::var("CRANK_SUPERVISION")
+        .map(|value| value == "unsupervised")
+        .unwrap_or(false)
+    {
+        NUDGE_MESSAGE_UNSUPERVISED
+    } else {
+        NUDGE_MESSAGE_SUPERVISED
+    };
+
     let status = Command::new("tmux")
-        .args(["send-keys", "-t", pane, NUDGE_MESSAGE, "Enter"])
+        .args(["send-keys", "-t", pane, message, "Enter"])
         .status()
         .context("failed to send tmux nudge")?;
     if !status.success() {

@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod controls;
 pub mod logging;
 pub mod markers;

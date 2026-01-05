@@ -7,14 +7,14 @@ use chrono::{Local, NaiveDate};
 use rand::random;
 use serde::Deserialize;
 
-use crate::task::model::{matches_task_id, Dependency, Task};
+use crate::task::model::{matches_task_id, Dependency, SupervisionMode, Task};
 
 #[derive(Debug, Default, Deserialize)]
 struct TaskFrontmatter {
     app: Option<String>,
     priority: Option<i32>,
     status: Option<String>,
-    autopilot: Option<bool>,
+    supervision: Option<SupervisionMode>,
     title: Option<String>,
     depends_on: Option<Vec<Dependency>>,
     workflow: Option<String>,
@@ -69,11 +69,15 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         .or(title_fallback)
         .unwrap_or_default();
 
+    let supervision = frontmatter
+        .supervision
+        .ok_or_else(|| anyhow!("supervision is required in frontmatter: {}", path.display()))?;
+
     Ok(Task {
         app: frontmatter.app.unwrap_or_default(),
         priority: frontmatter.priority.unwrap_or_default(),
         status: frontmatter.status.unwrap_or_default(),
-        autopilot: frontmatter.autopilot.unwrap_or(true),
+        supervision,
         title,
         depends_on: frontmatter.depends_on.unwrap_or_default(),
         workflow: frontmatter
@@ -169,6 +173,7 @@ pub fn task_template(
     title: &str,
     app: &str,
     priority: i32,
+    supervision: SupervisionMode,
     created: &str,
     deps: &[Dependency],
 ) -> String {
@@ -199,7 +204,8 @@ pub fn task_template(
     }
 
     format!(
-        "---\n{app_line}\n{title_line}\n{priority_line}\nstatus: open\nautopilot: true\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n"
+        "---\n{app_line}\n{title_line}\n{priority_line}\nstatus: open\nsupervision: {}\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n",
+        supervision.as_str()
     )
 }
 
@@ -208,6 +214,7 @@ pub fn create_task_file(
     title: &str,
     app: &str,
     priority: i32,
+    supervision: SupervisionMode,
     deps: &[Dependency],
 ) -> Result<PathBuf> {
     let id = generate_id();
@@ -219,7 +226,7 @@ pub fn create_task_file(
     crate::crank_io::ensure_dir(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 
-    let content = task_template(title, app, priority, &date, deps);
+    let content = task_template(title, app, priority, supervision, &date, deps);
     crate::crank_io::write_string(&task_path, content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
@@ -592,7 +599,7 @@ app: reader-rs
 title: Test Task
 priority: 3
 status: open
-autopilot: true
+supervision: unsupervised
 workflow: review-flow
 step_id: implement
 created: 2024-12-30
@@ -615,7 +622,7 @@ crank merge
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.priority, 3);
         assert_eq!(task.status, "open");
-        assert!(task.autopilot);
+        assert_eq!(task.supervision, SupervisionMode::Unsupervised);
         assert_eq!(task.workflow.as_deref(), Some("review-flow"));
         assert_eq!(task.step_id.as_deref(), Some("implement"));
         assert_eq!(task.run.as_deref(), Some("crank merge"));
@@ -634,7 +641,7 @@ crank merge
 app: reader-rs
 priority: 3
 status: open
-autopilot: true
+supervision: supervised
 created: 2024-12-30
 ---
 
@@ -655,7 +662,7 @@ app: monorepo
 title: Test Task
 priority: 3
 status: closed #33
-autopilot: true
+supervision: unsupervised
 created: 2024-12-30
 ---
 "#;
@@ -677,7 +684,7 @@ app: monorepo
 title: Test Task
 priority: 3
 status: open
-autopilot: true
+supervision: unsupervised
 created: 2024-12-30
 ---
 "#;

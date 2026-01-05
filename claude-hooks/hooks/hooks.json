@@ -1,5 +1,5 @@
 {
-  "description": "Crank autopilot stop hook",
+  "description": "Crank unsupervised stop hook",
   "hooks": {
     "Stop": [
       {

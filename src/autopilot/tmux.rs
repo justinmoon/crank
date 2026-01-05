@@ -4,8 +4,9 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::orchestrator::logging;
 use crate::task::git;
+use crate::task::model::SupervisionMode;
 
-pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
+pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>) -> Result<()> {
     if !std::env::var("TMUX").unwrap_or_default().is_empty() {
         return Err(anyhow!("crank tmux must be run outside tmux"));
     }
@@ -30,7 +31,13 @@ pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
 
     for id in 1..=concurrency {
         let window = format!("worker-{id}");
-        let mut worker_args = vec!["worker".to_string(), "--id".to_string(), id.to_string()];
+        let mut worker_args = vec![
+            "worker".to_string(),
+            "--id".to_string(),
+            id.to_string(),
+            "--mode".to_string(),
+            mode.as_str().to_string(),
+        ];
         if let Some(name) = project.as_deref() {
             worker_args.push("--project".to_string());
             worker_args.push(name.to_string());
@@ -79,6 +86,17 @@ pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
         .context("failed to create tmux logs window")?;
     if !status.success() {
         return Err(anyhow!("failed to create tmux logs window"));
+    }
+
+    let status = Command::new("tmux")
+        .args(["new-window", "-d", "-t", &session, "-n", "alerts", "-c"])
+        .arg(&git_root)
+        .arg(crank_bin)
+        .args(["alerts", "--watch"])
+        .status()
+        .context("failed to create tmux alerts window")?;
+    if !status.success() {
+        return Err(anyhow!("failed to create tmux alerts window"));
     }
 
     println!("Created tmux session: {session}");

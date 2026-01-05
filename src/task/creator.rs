@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use chrono::Local;
 
-use crate::task::model::Dependency;
+use crate::task::model::{Dependency, SupervisionMode};
 use crate::task::prompts;
 use crate::task::store;
 
@@ -38,10 +38,12 @@ pub fn create_task_file(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
+    supervision: Option<SupervisionMode>,
     deps: &[Dependency],
 ) -> Result<()> {
-    let (title, app, priority) = prompts::prompt_task_fields(git_root, title, app, priority)?;
-    store::create_task_file(git_root, &title, &app, priority, deps)?;
+    let (title, app, priority, supervision) =
+        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
+    store::create_task_file(git_root, &title, &app, priority, supervision, deps)?;
     Ok(())
 }
 
@@ -50,8 +52,10 @@ pub fn create_task_interactive(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
+    supervision: Option<SupervisionMode>,
 ) -> Result<()> {
-    let (title, app, priority) = prompts::prompt_task_fields(git_root, title, app, priority)?;
+    let (title, app, priority, supervision) =
+        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
 
     let id = store::generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
@@ -68,7 +72,7 @@ pub fn create_task_interactive(
         )
     })?;
 
-    let content = store::task_template(&title, &app, priority, &date, &[]);
+    let content = store::task_template(&title, &app, priority, supervision, &date, &[]);
     store::write_task_file(&task_path, &content)?;
 
     store::open_editor(&task_path)?;

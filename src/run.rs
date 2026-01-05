@@ -15,13 +15,13 @@ pub struct RunArgs {
     #[arg(value_name = "task-id")]
     pub task_id: Option<String>,
 
-    /// Force workflow scope
+    /// Force workflow scope (default: loop until waiting or complete)
     #[arg(long, conflicts_with = "task_id")]
     pub workflow: Option<String>,
 
-    /// Keep running workflow steps until waiting or complete
-    #[arg(long = "loop", requires = "workflow")]
-    pub loop_: bool,
+    /// Run only a single workflow step (no loop)
+    #[arg(long, requires = "workflow")]
+    pub once: bool,
 }
 
 pub fn run_command(args: RunArgs) -> Result<()> {
@@ -40,21 +40,22 @@ pub fn run_command(args: RunArgs) -> Result<()> {
     }
 
     if let Some(workflow_id) = args.workflow {
-        if args.loop_ {
-            return run_workflow_loop(&git_root, &workflow_id);
+        if args.once {
+            let current = current_task_for_workflow(&git_root, &tasks, &workflow_id);
+            return match run_next_workflow_step(&git_root, &tasks, &workflow_id, current.as_ref())?
+            {
+                WorkflowRunResult::Ran => Ok(()),
+                WorkflowRunResult::Waiting(message) => {
+                    println!("{message}");
+                    Ok(())
+                }
+                WorkflowRunResult::Complete => {
+                    println!("Workflow '{workflow_id}' complete");
+                    Ok(())
+                }
+            };
         }
-        let current = current_task_for_workflow(&git_root, &tasks, &workflow_id);
-        return match run_next_workflow_step(&git_root, &tasks, &workflow_id, current.as_ref())? {
-            WorkflowRunResult::Ran => Ok(()),
-            WorkflowRunResult::Waiting(message) => {
-                println!("{message}");
-                Ok(())
-            }
-            WorkflowRunResult::Complete => {
-                println!("Workflow '{workflow_id}' complete");
-                Ok(())
-            }
-        };
+        return run_workflow_loop(&git_root, &workflow_id);
     }
 
     if let Some(current_id) = read_current_task_id(&git_root) {
