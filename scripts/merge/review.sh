@@ -103,6 +103,7 @@ def emit_fail(message, details=None):
     print(f"FAIL: {message[:200]}")
     details_text = trim_details(details)
     if details_text:
+        print("Review output (truncated):")
         print(details_text)
     sys.exit(1)
 
