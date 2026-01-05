@@ -29,7 +29,7 @@ Two tools in one:
 - crank ask-for-help "msg"
 - crank alerts
 - crank build <template> --id <workflow-id> --var key=val
-- crank run [--workflow <workflow-id>] [--loop] [<task-id>]
+- crank run [--workflow <workflow-id>] [--once] [<task-id>]
 - crank review [--skip-tests]
 "#,
     );

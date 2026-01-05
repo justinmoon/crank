@@ -70,11 +70,13 @@ The `workflow` subcommand is removed in favor of `build` + `run`.
 ```
 crank run
 crank run --workflow <workflow-id>
+crank run --workflow <workflow-id> --once
 crank run <task-id>
 ```
 
 - `crank run`: pick the next task using sticky workflow context.
-- `crank run --workflow`: force workflow scope.
+- `crank run --workflow`: force workflow scope and loop until waiting/complete.
+- `crank run --workflow --once`: run a single workflow step.
 - `crank run <task-id>`: run a specific task.
 
 ### Task management (unchanged)
