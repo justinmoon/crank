@@ -9,10 +9,25 @@ cd apps/crank-alert-badge
 swift build -c release
 ```
 
+## Build app bundle
+
+```bash
+cd apps/crank-alert-badge
+./build.sh
+```
+
 ## Run
 
 ```bash
 ./.build/release/CrankAlertBadge
+```
+
+## Install
+
+```bash
+cd apps/crank-alert-badge
+./build.sh
+cp -r CrankAlertBadge.app /Applications/
 ```
 
 ## Configuration

@@ -38,15 +38,91 @@
 
             cargoArtifacts = craneLib.buildDepsOnly commonArgs;
             crank = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+            crankAlertBadge =
+              if pkgs.stdenv.isDarwin then
+                let
+                  xcodeBaseDir = "/Applications/Xcode-26.2.0.app";
+                  xcodeWrapper = pkgs.xcodeenv.composeXcodeWrapper {
+                    xcodeBaseDir = xcodeBaseDir;
+                  };
+                in
+                pkgs.stdenvNoCC.mkDerivation {
+                  pname = "crank-alert-badge";
+                  version = "0.1.0";
+                  src = ./apps/crank-alert-badge;
+                  nativeBuildInputs = [ xcodeWrapper ];
+                  __noChroot = true;
+
+                  buildPhase = ''
+                    export HOME="$TMPDIR"
+                    export DEVELOPER_DIR="${xcodeBaseDir}/Contents/Developer"
+                    export MACOSX_DEPLOYMENT_TARGET=13.0
+                    ${xcodeWrapper}/bin/xcrun --sdk macosx swiftc \
+                      -O \
+                      -framework AppKit \
+                      -o CrankAlertBadge \
+                      Sources/main.swift
+                  '';
+
+                  installPhase = ''
+                    app="$out/Applications/CrankAlertBadge.app"
+                    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+                    cp CrankAlertBadge "$app/Contents/MacOS/"
+
+                    if [ -f AppIcon.icns ]; then
+                      cp AppIcon.icns "$app/Contents/Resources/"
+                    fi
+
+                    cat > "$app/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>CrankAlertBadge</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.crank.alert-badge</string>
+    <key>CFBundleName</key>
+    <string>CrankAlertBadge</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>
+EOF
+
+                    ${xcodeWrapper}/bin/codesign --force --deep --sign - "$app"
+                  '';
+
+                  meta = with pkgs.lib; {
+                    description = "Crank alert badge menu bar app";
+                    platforms = platforms.darwin;
+                  };
+                }
+              else
+                null;
           in
-          f { inherit pkgs system rustToolchain craneLib crank; }
+          f { inherit pkgs system rustToolchain craneLib crank crankAlertBadge; }
         );
     in
     {
-      packages = forAllSystems ({ crank, ... }: {
+      packages = forAllSystems ({ crank, crankAlertBadge, pkgs, ... }: {
         default = crank;
         crank = crank;
-      });
+      } // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
+        crank-alert-badge = crankAlertBadge;
+      }));
 
       devShells = forAllSystems ({ pkgs, rustToolchain, ... }: {
         default = pkgs.mkShell {
