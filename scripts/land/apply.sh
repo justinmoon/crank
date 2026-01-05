@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$dry_run" == "true" ]]; then
-  echo "Dry run: merge skipped"
+  echo "Dry run: land skipped"
   exit 0
 fi
 
@@ -64,7 +64,7 @@ if [[ -n "$target_repo" ]]; then
   merge_target="FETCH_HEAD"
 fi
 
-merge_msg="Merge ${source_branch} (${source_commit})"
+merge_msg="Land ${source_branch} (${source_commit})"
 
 set +e
 git merge --no-ff -m "$merge_msg" "$merge_target" >/dev/null 2>&1
@@ -86,4 +86,4 @@ if [[ $push_status -ne 0 ]]; then
   die "push failed"
 fi
 
-echo "Merged $(current_commit "$target")"
+echo "Landed $(current_commit "$target")"

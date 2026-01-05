@@ -297,12 +297,14 @@ fn run_agent_step(git_root: &Path, task: &Task) -> Result<()> {
     let agent = task.coding_agent.trim().to_lowercase();
     let status = if agent == "codex" {
         Command::new("codex")
+            .arg("--yolo")
             .arg(prompt)
             .current_dir(git_root)
             .status()
             .context("failed to launch codex")?
     } else if agent == "claude" {
         Command::new("claude")
+            .arg("--dangerously-skip-permissions")
             .arg(prompt)
             .current_dir(git_root)
             .status()

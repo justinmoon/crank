@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 
 mod agentsmd;
@@ -33,11 +33,25 @@ enum Commands {
         concurrency: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
-        mode: SupervisionMode,
+        #[arg(
+            long,
+            short,
+            value_enum,
+            conflicts_with_all = ["supervised", "unsupervised"],
+            required_unless_present_any = ["supervised", "unsupervised"]
+        )]
+        mode: Option<SupervisionMode>,
+
+        /// Shortcut for --mode supervised
+        #[arg(short = 's', long, conflicts_with_all = ["unsupervised", "mode"])]
+        supervised: bool,
+
+        /// Shortcut for --mode unsupervised
+        #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
+        unsupervised: bool,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
@@ -48,26 +62,54 @@ enum Commands {
         concurrency: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
-        mode: SupervisionMode,
+        #[arg(
+            long,
+            short,
+            value_enum,
+            conflicts_with_all = ["supervised", "unsupervised"],
+            required_unless_present_any = ["supervised", "unsupervised"]
+        )]
+        mode: Option<SupervisionMode>,
+
+        /// Shortcut for --mode supervised
+        #[arg(short = 's', long, conflicts_with_all = ["unsupervised", "mode"])]
+        supervised: bool,
+
+        /// Shortcut for --mode unsupervised
+        #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
+        unsupervised: bool,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
     /// Run a tmux worker (internal)
     Worker {
         /// Worker ID (1-based)
-        #[arg(long)]
+        #[arg(long, short)]
         id: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
-        mode: SupervisionMode,
+        #[arg(
+            long,
+            short,
+            value_enum,
+            conflicts_with_all = ["supervised", "unsupervised"],
+            required_unless_present_any = ["supervised", "unsupervised"]
+        )]
+        mode: Option<SupervisionMode>,
+
+        /// Shortcut for --mode supervised
+        #[arg(short = 's', long, conflicts_with_all = ["unsupervised", "mode"])]
+        supervised: bool,
+
+        /// Shortcut for --mode unsupervised
+        #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
+        unsupervised: bool,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
@@ -189,20 +231,33 @@ async fn main() -> Result<()> {
         Commands::Tmux {
             concurrency,
             mode,
+            supervised,
+            unsupervised,
             project,
         } => {
+            let mode = resolve_mode(mode, supervised, unsupervised)?;
             orchestrator::tmux::run_tmux(concurrency, mode, project)?;
         }
 
         Commands::Zellij {
             concurrency,
             mode,
+            supervised,
+            unsupervised,
             project,
         } => {
+            let mode = resolve_mode(mode, supervised, unsupervised)?;
             orchestrator::zellij::run_zellij(concurrency, mode, project)?;
         }
 
-        Commands::Worker { id, mode, project } => {
+        Commands::Worker {
+            id,
+            mode,
+            supervised,
+            unsupervised,
+            project,
+        } => {
+            let mode = resolve_mode(mode, supervised, unsupervised)?;
             orchestrator::worker::run_worker(id, mode, project).await?;
         }
 
@@ -254,4 +309,18 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_mode(
+    mode: Option<SupervisionMode>,
+    supervised: bool,
+    unsupervised: bool,
+) -> Result<SupervisionMode> {
+    if supervised {
+        return Ok(SupervisionMode::Supervised);
+    }
+    if unsupervised {
+        return Ok(SupervisionMode::Unsupervised);
+    }
+    mode.ok_or_else(|| anyhow!("mode is required; use --mode <supervised|unsupervised>, -s, or -u"))
 }

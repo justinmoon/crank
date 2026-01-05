@@ -37,12 +37,12 @@ if [[ "${CRANK_APPROVED:-}" == "1" ]]; then
 fi
 
 if [[ -t 0 ]]; then
-  read -r -p "Approve merge? (y/N): " answer
+  read -r -p "Approve land? (y/N): " answer
   if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
     echo "Approval granted"
     exit 0
   fi
-  die "merge rejected"
+  die "land rejected"
 fi
 
 die "approval required; rerun with CRANK_APPROVED=1"
