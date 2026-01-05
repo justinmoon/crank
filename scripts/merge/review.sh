@@ -80,17 +80,7 @@ output=$($crank_bin "${args[@]}" 2>&1)
 status=$?
 set -e
 
-review_log="${CRANK_REVIEW_LOG:-}"
-if [[ -z "$review_log" ]]; then
-  review_log="$(mktemp -t crank-review-XXXXXX.log 2>/dev/null || true)"
-fi
-if [[ -n "$review_log" ]]; then
-  if ! printf "%s\n" "$output" > "$review_log"; then
-    review_log=""
-  fi
-fi
-
-CRANK_REVIEW_OUTPUT="$output" CRANK_REVIEW_EXIT="$status" CRANK_REVIEW_LOG="$review_log" python3 - <<'PY'
+CRANK_REVIEW_OUTPUT="$output" CRANK_REVIEW_EXIT="$status" python3 - <<'PY'
 import json
 import os
 import re
@@ -98,7 +88,6 @@ import sys
 
 raw = os.environ.get("CRANK_REVIEW_OUTPUT", "")
 exit_code = int(os.environ.get("CRANK_REVIEW_EXIT", "1") or "1")
-log_path = os.environ.get("CRANK_REVIEW_LOG", "")
 
 def trim_details(value, limit=2000):
     if value is None:
@@ -114,9 +103,8 @@ def emit_fail(message, details=None):
     print(f"FAIL: {message[:200]}")
     details_text = trim_details(details)
     if details_text:
+        print("Review output (truncated):")
         print(details_text)
-    if log_path:
-        print(f"Review output saved to: {log_path}")
     sys.exit(1)
 
 # Prefer parsing `crank review` JSON output:
