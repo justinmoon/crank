@@ -11,26 +11,14 @@ pub struct SessionSpec {
     pub git_root: PathBuf,
     pub session_name: String,
     mode: SupervisionMode,
-    project: Option<String>,
     worker_bin: PathBuf,
     log_dir: PathBuf,
 }
 
 impl SessionSpec {
-    pub fn new(concurrency: u16, mode: SupervisionMode, project: Option<String>) -> Result<Self> {
-        let project = project.and_then(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
+    pub fn new(concurrency: u16, mode: SupervisionMode) -> Result<Self> {
         let git_root = git::git_root()?;
-        let session_name = match project.as_deref() {
-            Some(name) => format!("crank({name})"),
-            None => "crank".to_string(),
-        };
+        let session_name = "crank".to_string();
         let worker_bin = std::env::current_exe().context("failed to locate crank binary")?;
         let log_dir = logging::log_dir()?;
 
@@ -39,26 +27,20 @@ impl SessionSpec {
             git_root,
             session_name,
             mode,
-            project,
             worker_bin,
             log_dir,
         })
     }
 
     pub fn worker_command(&self, id: u16) -> Vec<String> {
-        let mut args = vec![
+        vec![
             self.worker_bin.to_string_lossy().to_string(),
             "worker".to_string(),
             "--id".to_string(),
             id.to_string(),
             "--mode".to_string(),
             self.mode.as_str().to_string(),
-        ];
-        if let Some(project) = self.project.as_deref() {
-            args.push("--project".to_string());
-            args.push(project.to_string());
-        }
-        args
+        ]
     }
 
     pub fn log_tail_args(&self) -> Vec<String> {

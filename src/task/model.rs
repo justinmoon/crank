@@ -41,7 +41,6 @@ impl Dependency {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
-    pub app: String,
     pub priority: i32,
     pub status: String,
     pub supervision: SupervisionMode,

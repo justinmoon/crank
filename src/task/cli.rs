@@ -52,10 +52,6 @@ pub struct CreateArgs {
     #[arg(value_name = "title", num_args = 0..)]
     title: Vec<String>,
 
-    /// App name
-    #[arg(short, long)]
-    app: Option<String>,
-
     /// Priority 1-5 (5=urgent)
     #[arg(short, long)]
     priority: Option<i32>,
@@ -93,10 +89,6 @@ pub struct ClaimArgs {
     /// Output JSON
     #[arg(long)]
     json: bool,
-
-    /// Filter by project/app name
-    #[arg(long)]
-    project: Option<String>,
 }
 
 #[derive(Args, Clone)]
@@ -191,7 +183,6 @@ pub fn run_subcommand(cmd: TaskCommand) -> Result<()> {
             };
             workflow::run_create(
                 title,
-                args.app,
                 args.priority,
                 args.supervision,
                 args.edit,
@@ -200,7 +191,7 @@ pub fn run_subcommand(cmd: TaskCommand) -> Result<()> {
             )
         }
         TaskCommand::Next(args) => workflow::run_next(args.no_worktree, args.select),
-        TaskCommand::Claim(args) => workflow::run_claim(args.json, args.project),
+        TaskCommand::Claim(args) => workflow::run_claim(args.json),
         TaskCommand::Done(args) => workflow::run_done(&args.task_id, args.pr),
         TaskCommand::Hooks(args) => match args.command {
             HooksCommand::Install => workflow::run_hooks_install(),

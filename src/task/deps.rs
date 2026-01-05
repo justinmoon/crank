@@ -297,7 +297,6 @@ mod tests {
 
     fn task(id: &str, deps: Vec<Dependency>) -> Task {
         Task {
-            app: "monorepo".to_string(),
             priority: 3,
             status: "open".to_string(),
             supervision: SupervisionMode::Unsupervised,

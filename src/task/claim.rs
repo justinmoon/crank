@@ -15,18 +15,13 @@ const CLAIM_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAIM_LOCK_BACKOFF: Duration = Duration::from_millis(200);
 const ACTIVE_CLAIM_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
-pub fn claim_next_task(
-    git_root: &Path,
-    repo_root: &Path,
-    project: Option<&str>,
-) -> Result<Option<Task>> {
-    claim_next_task_with_lock_dir(git_root, repo_root, project, None)
+pub fn claim_next_task(git_root: &Path, repo_root: &Path) -> Result<Option<Task>> {
+    claim_next_task_with_lock_dir(git_root, repo_root, None)
 }
 
 fn claim_next_task_with_lock_dir(
     git_root: &Path,
     repo_root: &Path,
-    project: Option<&str>,
     lock_dir_override: Option<&Path>,
 ) -> Result<Option<Task>> {
     let _lock = acquire_claim_lock(repo_root, lock_dir_override)?;
@@ -49,11 +44,6 @@ fn claim_next_task_with_lock_dir(
         }
         if task.supervision != SupervisionMode::Unsupervised {
             continue;
-        }
-        if let Some(project) = project {
-            if task.app != project {
-                continue;
-            }
         }
         if !task.blockers(&tasks).is_empty() {
             continue;
@@ -218,7 +208,7 @@ mod tests {
     ) -> PathBuf {
         let path = dir.join(format!("{id}.md"));
         let content = format!(
-            "---\napp: crank\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\nsupervision: unsupervised\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
+            "---\ntitle: Task {id}\npriority: {priority}\nstatus: {status}\nsupervision: unsupervised\ncoding_agent: opencode\ncreated: {created}\n{depends_on}---\n\n## Intent\n"
         );
         crate::crank_io::write_string(&path, content).unwrap();
         path
@@ -244,36 +234,15 @@ mod tests {
         write_task(&issues, "b222", 5, "open", "2024-12-29", "");
         write_task(&issues, "c333", 4, "open", "2024-12-28", "");
 
-        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, Some(&lock_dir))
             .unwrap()
             .unwrap();
         assert_eq!(claimed.id, "b222");
 
-        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, Some(&lock_dir))
             .unwrap()
             .unwrap();
         assert_eq!(claimed.id, "c333");
-    }
-
-    #[test]
-    fn claim_next_task_honors_project_filter() {
-        let dir = tempdir().unwrap();
-        let git_root = dir.path();
-        let repo_root = dir.path();
-        let lock_dir = dir.path().join("locks");
-        let issues = crate::crank_io::repo_crank_dir(git_root);
-        crate::crank_io::ensure_dir(&issues).unwrap();
-
-        write_task(&issues, "a111", 3, "open", "2024-12-30", "");
-        let other = issues.join("b222.md");
-        let content = "---\napp: other\ntitle: Task b222\npriority: 4\nstatus: open\nsupervision: unsupervised\ncoding_agent: opencode\ncreated: 2024-12-29\n---\n";
-        crate::crank_io::write_string(&other, content).unwrap();
-
-        let claimed =
-            claim_next_task_with_lock_dir(git_root, repo_root, Some("crank"), Some(&lock_dir))
-                .unwrap()
-                .unwrap();
-        assert_eq!(claimed.id, "a111");
     }
 
     #[test]
@@ -288,7 +257,7 @@ mod tests {
         write_task(&issues, "a111", 3, "open", "2024-12-30", "");
         write_task(&issues, "b222", 3, "open", "2024-12-29", "");
 
-        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, None, Some(&lock_dir))
+        let claimed = claim_next_task_with_lock_dir(git_root, repo_root, Some(&lock_dir))
             .unwrap()
             .unwrap();
         assert_eq!(claimed.id, "b222");

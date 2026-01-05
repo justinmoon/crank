@@ -1,10 +1,7 @@
-use std::path::Path;
-
 use anyhow::{anyhow, Result};
 use dialoguer::{Input, Select};
 
 use crate::task::model::SupervisionMode;
-use crate::task::store::get_apps;
 
 #[derive(Debug, Clone, Copy)]
 pub enum BranchMethod {
@@ -13,14 +10,11 @@ pub enum BranchMethod {
 }
 
 pub fn prompt_task_fields(
-    git_root: &Path,
     title: Option<String>,
-    app: Option<String>,
     priority: Option<i32>,
     supervision: Option<SupervisionMode>,
-) -> Result<(String, String, i32, SupervisionMode)> {
+) -> Result<(String, i32, SupervisionMode)> {
     let mut title = title.unwrap_or_default();
-    let mut app = app.unwrap_or_default();
     let mut priority = priority.unwrap_or(0);
     let mut supervision = supervision;
 
@@ -29,19 +23,6 @@ pub fn prompt_task_fields(
             .with_prompt("Task title")
             .with_initial_text("")
             .interact_text()?;
-    }
-
-    if app.trim().is_empty() {
-        let apps = get_apps(git_root);
-        let selection = Select::new()
-            .with_prompt("App")
-            .items(&apps)
-            .default(0)
-            .interact()?;
-        app = apps
-            .get(selection)
-            .cloned()
-            .ok_or_else(|| anyhow!("app selection required"))?;
     }
 
     if priority == 0 {
@@ -74,16 +55,12 @@ pub fn prompt_task_fields(
     if title.trim().is_empty() {
         return Err(anyhow!("title is required"));
     }
-    if app.trim().is_empty() {
-        return Err(anyhow!("app is required"));
-    }
     if priority == 0 {
         return Err(anyhow!("priority is required"));
     }
 
     Ok((
         title.trim().to_string(),
-        app.trim().to_string(),
         priority,
         supervision.ok_or_else(|| anyhow!("supervision is required"))?,
     ))

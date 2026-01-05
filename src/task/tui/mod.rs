@@ -66,7 +66,7 @@ impl TuiState {
             }
             if !self.filter_query.trim().is_empty() {
                 let query = self.filter_query.to_lowercase();
-                let haystack = format!("{} {} {}", task.title, task.app, task.id).to_lowercase();
+                let haystack = format!("{} {}", task.title, task.id).to_lowercase();
                 if !haystack.contains(&query) {
                     continue;
                 }
@@ -546,10 +546,6 @@ fn build_list_items(state: &TuiState) -> Vec<ListItem<'static>> {
                 format!("[P{}] ", task.priority),
                 priority_style,
             ));
-            spans.push(Span::styled(
-                format!("[{}] ", task.app),
-                Style::default().fg(Color::DarkGray),
-            ));
 
             let title_style = if task.is_closed() {
                 Style::default()
@@ -675,7 +671,6 @@ fn render_confirm(state: &TuiState, _area: Rect) -> Paragraph<'static> {
 
     if let Some(task) = state.selected_task() {
         lines.push(format!("  Title:    {}", task.title));
-        lines.push(format!("  App:      {}", task.app));
         lines.push(format!("  Priority: P{}", task.priority));
         lines.push(format!("  Status:   {}", task.status));
         lines.push(format!("  File:     .crank/{}.md", task.id));

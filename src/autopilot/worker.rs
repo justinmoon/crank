@@ -23,7 +23,7 @@ const OPENCODE_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 const OPENCODE_NUDGE_THROTTLE: Duration = Duration::from_secs(60);
 const CODEX_IDLE_NUDGE_AFTER: Duration = Duration::from_secs(300);
 
-pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>) -> Result<()> {
+pub async fn run_worker(id: u16, mode: SupervisionMode) -> Result<()> {
     if id == 0 {
         return Err(anyhow!("worker id must be at least 1"));
     }
@@ -31,7 +31,6 @@ pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>)
 
     let repo_root = task_git::repo_root()?;
     let tasks_root = repo_root.clone();
-    let project = project.as_deref().map(str::trim).filter(|p| !p.is_empty());
     let logger = Logger::new(&format!("worker-{id}"))?;
     log_and_print(&logger, "info", "worker started")?;
     log_and_print(
@@ -57,8 +56,8 @@ pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>)
     };
 
     match mode {
-        SupervisionMode::Supervised => run_supervised(&ctx, &tasks_root, project).await,
-        SupervisionMode::Unsupervised => run_unsupervised(&ctx, &tasks_root, project).await,
+        SupervisionMode::Supervised => run_supervised(&ctx, &tasks_root).await,
+        SupervisionMode::Unsupervised => run_unsupervised(&ctx, &tasks_root).await,
     }
 }
 
@@ -79,16 +78,12 @@ impl<'a> WorkerContext<'a> {
     }
 }
 
-async fn run_unsupervised(
-    ctx: &WorkerContext<'_>,
-    tasks_root: &Path,
-    project: Option<&str>,
-) -> Result<()> {
+async fn run_unsupervised(ctx: &WorkerContext<'_>, tasks_root: &Path) -> Result<()> {
     let mut backoff = CLAIM_BACKOFF_START;
 
     loop {
         ctx.logger.log("debug", "claiming next task")?;
-        let task = claim_next_task(tasks_root, ctx.repo_root, project)?;
+        let task = claim_next_task(tasks_root, ctx.repo_root)?;
         let Some(task) = task else {
             ctx.logger.log(
                 "debug",
@@ -112,16 +107,9 @@ async fn run_unsupervised(
     }
 }
 
-async fn run_supervised(
-    ctx: &WorkerContext<'_>,
-    tasks_root: &Path,
-    project: Option<&str>,
-) -> Result<()> {
+async fn run_supervised(ctx: &WorkerContext<'_>, tasks_root: &Path) -> Result<()> {
     loop {
-        let mut tasks = store::load_tasks(tasks_root)?;
-        if let Some(project) = project {
-            tasks.retain(|task| task.app == project);
-        }
+        let tasks = store::load_tasks(tasks_root)?;
         if tasks.is_empty() {
             ctx.logger
                 .log("debug", "no tasks available; sleeping 10s")?;

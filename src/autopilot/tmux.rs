@@ -7,7 +7,7 @@ use crate::orchestrator::logging;
 use crate::task::git;
 use crate::task::model::SupervisionMode;
 
-pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>) -> Result<()> {
+pub fn run_tmux(concurrency: u16, mode: SupervisionMode) -> Result<()> {
     if !std::env::var("TMUX").unwrap_or_default().is_empty() {
         return Err(anyhow!("crank tmux must be run outside tmux"));
     }
@@ -16,10 +16,7 @@ pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>
     }
 
     let git_root = git::git_root()?;
-    let session = match project.as_deref() {
-        Some(name) => format!("crank({name})"),
-        None => "crank".to_string(),
-    };
+    let session = "crank".to_string();
 
     if session_exists(&session)? {
         return Err(anyhow!("tmux session already exists: {session}"));
@@ -32,17 +29,13 @@ pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>
 
     for id in 1..=concurrency {
         let window = format!("worker-{id}");
-        let mut worker_args = vec![
+        let worker_args = vec![
             "worker".to_string(),
             "--id".to_string(),
             id.to_string(),
             "--mode".to_string(),
             mode.as_str().to_string(),
         ];
-        if let Some(name) = project.as_deref() {
-            worker_args.push("--project".to_string());
-            worker_args.push(name.to_string());
-        }
         if id == 1 {
             let status = Command::new("tmux")
                 .args(["new-session", "-d", "-s", &session, "-n", &window, "-c"])

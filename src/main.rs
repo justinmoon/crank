@@ -49,10 +49,6 @@ enum Commands {
         /// Shortcut for --mode unsupervised
         #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
         unsupervised: bool,
-
-        /// Filter tasks by project/app name
-        #[arg(long, short)]
-        project: Option<String>,
     },
 
     /// Launch zellij orchestrator session
@@ -78,10 +74,6 @@ enum Commands {
         /// Shortcut for --mode unsupervised
         #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
         unsupervised: bool,
-
-        /// Filter tasks by project/app name
-        #[arg(long, short)]
-        project: Option<String>,
     },
 
     /// Run a tmux worker (internal)
@@ -107,10 +99,6 @@ enum Commands {
         /// Shortcut for --mode unsupervised
         #[arg(short = 'u', long, conflicts_with_all = ["supervised", "mode"])]
         unsupervised: bool,
-
-        /// Filter tasks by project/app name
-        #[arg(long, short)]
-        project: Option<String>,
     },
 
     /// Ask for help and keep the session open
@@ -233,10 +221,9 @@ async fn main() -> Result<()> {
             mode,
             supervised,
             unsupervised,
-            project,
         } => {
             let mode = resolve_mode(mode, supervised, unsupervised)?;
-            orchestrator::tmux::run_tmux(concurrency, mode, project)?;
+            orchestrator::tmux::run_tmux(concurrency, mode)?;
         }
 
         Commands::Zellij {
@@ -244,10 +231,9 @@ async fn main() -> Result<()> {
             mode,
             supervised,
             unsupervised,
-            project,
         } => {
             let mode = resolve_mode(mode, supervised, unsupervised)?;
-            orchestrator::zellij::run_zellij(concurrency, mode, project)?;
+            orchestrator::zellij::run_zellij(concurrency, mode)?;
         }
 
         Commands::Worker {
@@ -255,10 +241,9 @@ async fn main() -> Result<()> {
             mode,
             supervised,
             unsupervised,
-            project,
         } => {
             let mode = resolve_mode(mode, supervised, unsupervised)?;
-            orchestrator::worker::run_worker(id, mode, project).await?;
+            orchestrator::worker::run_worker(id, mode).await?;
         }
 
         Commands::AskForHelp { message } => {

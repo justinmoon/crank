@@ -36,26 +36,24 @@ pub fn parse_deps_flag(deps: &str) -> Result<Vec<Dependency>> {
 pub fn create_task_file(
     git_root: &Path,
     title: Option<String>,
-    app: Option<String>,
     priority: Option<i32>,
     supervision: Option<SupervisionMode>,
     deps: &[Dependency],
 ) -> Result<()> {
-    let (title, app, priority, supervision) =
-        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
-    store::create_task_file(git_root, &title, &app, priority, supervision, deps)?;
+    let (title, priority, supervision) =
+        prompts::prompt_task_fields(title, priority, supervision)?;
+    store::create_task_file(git_root, &title, priority, supervision, deps)?;
     Ok(())
 }
 
 pub fn create_task_interactive(
     git_root: &Path,
     title: Option<String>,
-    app: Option<String>,
     priority: Option<i32>,
     supervision: Option<SupervisionMode>,
 ) -> Result<()> {
-    let (title, app, priority, supervision) =
-        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
+    let (title, priority, supervision) =
+        prompts::prompt_task_fields(title, priority, supervision)?;
 
     let id = store::generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
@@ -72,7 +70,7 @@ pub fn create_task_interactive(
         )
     })?;
 
-    let content = store::task_template(&title, &app, priority, supervision, &date, &[]);
+    let content = store::task_template(&title, priority, supervision, &date, &[]);
     store::write_task_file(&task_path, &content)?;
 
     store::open_editor(&task_path)?;
@@ -82,9 +80,6 @@ pub fn create_task_interactive(
 
     if task.title.trim().is_empty() {
         return Err(anyhow!("title is required; edit {rel_task_path}"));
-    }
-    if task.app.trim().is_empty() {
-        return Err(anyhow!("app is required; edit {rel_task_path}"));
     }
     if task.priority < 1 || task.priority > 5 {
         return Err(anyhow!("priority must be 1-5; edit {rel_task_path}"));

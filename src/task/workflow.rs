@@ -137,23 +137,14 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
     store::write_current_task_marker(&worktree_path, &selected.id)
         .context("failed to write current task marker")?;
 
-    let mut workdir = worktree_path.clone();
-    if selected.app != "monorepo" && selected.app != "infra" {
-        let app_dir = worktree_path.join("projects").join(&selected.app);
-        if app_dir.exists() {
-            workdir = app_dir;
-        }
-    }
-
     let rel_issue_path = format!(".crank/{}.md", selected.id);
 
-    run_tmux_flow(&branch, &worktree_path, &workdir, &model, &rel_issue_path)
+    run_tmux_flow(&branch, &worktree_path, &model, &rel_issue_path)
 }
 
 fn run_tmux_flow(
     branch: &str,
     worktree_path: &Path,
-    workdir: &Path,
     model: &str,
     rel_issue_path: &str,
 ) -> Result<()> {
@@ -177,19 +168,6 @@ fn run_tmux_flow(
     }
 
     thread::sleep(Duration::from_millis(200));
-
-    if workdir != worktree_path {
-        let status = Command::new("tmux")
-            .args(["send-keys", "-t", branch])
-            .arg(format!("cd {}", workdir.display()))
-            .arg("Enter")
-            .status()
-            .context("failed to cd to workdir")?;
-        if !status.success() {
-            return Err(anyhow!("failed to cd to workdir"));
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
 
     let prompt = format!(
         "Read {rel_issue_path} and implement it. Ask clarifying questions first if needed."
@@ -227,7 +205,6 @@ fn find_selected_task<'a>(tasks: &'a [Task], select: &str) -> Option<&'a Task> {
 
 pub fn run_create(
     title: Option<String>,
-    app: Option<String>,
     priority: Option<i32>,
     supervision: Option<SupervisionMode>,
     use_editor: bool,
@@ -247,10 +224,10 @@ pub fn run_create(
     };
 
     if use_editor {
-        return creator::create_task_interactive(&git_root, title, app, priority, supervision);
+        return creator::create_task_interactive(&git_root, title, priority, supervision);
     }
 
-    creator::create_task_file(&git_root, title, app, priority, supervision, &dependencies)
+    creator::create_task_file(&git_root, title, priority, supervision, &dependencies)
 }
 
 pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {
@@ -278,12 +255,11 @@ pub fn run_done(task_id: &str, pr_number: Option<i32>) -> Result<()> {
     Ok(())
 }
 
-pub fn run_claim(json: bool, project: Option<String>) -> Result<()> {
+pub fn run_claim(json: bool) -> Result<()> {
     let git_root = git::git_root()?;
     let repo_root = git::repo_root()?;
-    let project = project.as_deref().map(str::trim).filter(|p| !p.is_empty());
 
-    let task = claim::claim_next_task(&git_root, &repo_root, project)?;
+    let task = claim::claim_next_task(&git_root, &repo_root)?;
     let Some(task) = task else {
         return Err(anyhow!("no claimable tasks"));
     };

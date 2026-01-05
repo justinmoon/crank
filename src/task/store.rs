@@ -11,7 +11,6 @@ use crate::task::model::{matches_task_id, Dependency, SupervisionMode, Task};
 
 #[derive(Debug, Default, Deserialize)]
 struct TaskFrontmatter {
-    app: Option<String>,
     priority: Option<i32>,
     status: Option<String>,
     supervision: Option<SupervisionMode>,
@@ -74,7 +73,6 @@ pub fn parse_task(path: &Path) -> Result<Task> {
         .ok_or_else(|| anyhow!("supervision is required in frontmatter: {}", path.display()))?;
 
     Ok(Task {
-        app: frontmatter.app.unwrap_or_default(),
         priority: frontmatter.priority.unwrap_or_default(),
         status: frontmatter.status.unwrap_or_default(),
         supervision,
@@ -171,18 +169,11 @@ fn extract_run_command(content: &str) -> Option<String> {
 
 pub fn task_template(
     title: &str,
-    app: &str,
     priority: i32,
     supervision: SupervisionMode,
     created: &str,
     deps: &[Dependency],
 ) -> String {
-    let app_line = if app.trim().is_empty() {
-        "app:".to_string()
-    } else {
-        format!("app: {app}")
-    };
-
     let priority_line = if priority == 0 {
         "priority:".to_string()
     } else {
@@ -204,7 +195,7 @@ pub fn task_template(
     }
 
     format!(
-        "---\n{app_line}\n{title_line}\n{priority_line}\nstatus: open\nsupervision: {}\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n",
+        "---\n{title_line}\n{priority_line}\nstatus: open\nsupervision: {}\ncoding_agent: opencode\ncreated: {created}\n{deps_section}---\n\n## Intent\n\n## Spec\n",
         supervision.as_str()
     )
 }
@@ -212,7 +203,6 @@ pub fn task_template(
 pub fn create_task_file(
     git_root: &Path,
     title: &str,
-    app: &str,
     priority: i32,
     supervision: SupervisionMode,
     deps: &[Dependency],
@@ -226,7 +216,7 @@ pub fn create_task_file(
     crate::crank_io::ensure_dir(&tasks_dir)
         .with_context(|| format!("failed to create tasks directory: {}", tasks_dir.display()))?;
 
-    let content = task_template(title, app, priority, supervision, &date, deps);
+    let content = task_template(title, priority, supervision, &date, deps);
     crate::crank_io::write_string(&task_path, content)
         .with_context(|| format!("failed to write task file: {}", task_path.display()))?;
 
@@ -512,23 +502,6 @@ pub fn remove_dependency_from_file(task_path: &Path, dep_id: &str) -> Result<()>
     Ok(())
 }
 
-pub fn get_apps(git_root: &Path) -> Vec<String> {
-    let mut apps = vec!["monorepo".to_string(), "infra".to_string()];
-    let apps_dir = git_root.join("projects");
-
-    let entries = match fs::read_dir(&apps_dir) {
-        Ok(entries) => entries,
-        Err(_) => return apps,
-    };
-
-    for entry in entries.flatten() {
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            apps.push(entry.file_name().to_string_lossy().to_string());
-        }
-    }
-
-    apps
-}
 
 pub fn open_editor(path: &Path) -> Result<()> {
     let mut cmd = editor_command(path)?;
@@ -595,7 +568,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("abcd.md");
         let content = r#"---
-app: reader-rs
 title: Test Task
 priority: 3
 status: open
@@ -618,7 +590,6 @@ crank merge
 
         let task = parse_task(&path).unwrap();
         assert_eq!(task.id, "abcd");
-        assert_eq!(task.app, "reader-rs");
         assert_eq!(task.title, "Test Task");
         assert_eq!(task.priority, 3);
         assert_eq!(task.status, "open");
@@ -638,7 +609,6 @@ crank merge
         let dir = tempdir().unwrap();
         let path = dir.path().join("abcd.md");
         let content = r#"---
-app: reader-rs
 priority: 3
 status: open
 supervision: supervised
@@ -658,7 +628,6 @@ created: 2024-12-30
         let dir = tempdir().unwrap();
         let path = dir.path().join("abcd.md");
         let content = r#"---
-app: monorepo
 title: Test Task
 priority: 3
 status: closed #33
@@ -680,7 +649,6 @@ created: 2024-12-30
         let dir = tempdir().unwrap();
         let path = dir.path().join("abcd.md");
         let content = r#"---
-app: monorepo
 title: Test Task
 priority: 3
 status: open

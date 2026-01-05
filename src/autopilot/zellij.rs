@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use crate::orchestrator::session::SessionSpec;
 use crate::task::model::SupervisionMode;
 
-pub fn run_zellij(concurrency: u16, mode: SupervisionMode, project: Option<String>) -> Result<()> {
+pub fn run_zellij(concurrency: u16, mode: SupervisionMode) -> Result<()> {
     if !std::env::var("ZELLIJ_SESSION_NAME")
         .unwrap_or_default()
         .is_empty()
@@ -18,7 +18,7 @@ pub fn run_zellij(concurrency: u16, mode: SupervisionMode, project: Option<Strin
         return Err(anyhow!("concurrency must be at least 1"));
     }
 
-    let spec = SessionSpec::new(concurrency, mode, project)?;
+    let spec = SessionSpec::new(concurrency, mode)?;
 
     if session_exists(&spec.session_name)? {
         return Err(anyhow!(

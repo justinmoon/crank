@@ -78,7 +78,7 @@ pub fn run_command(args: RunArgs) -> Result<()> {
         }
     }
 
-    let task = claim_next_task(&git_root, &repo_root, None)?;
+    let task = claim_next_task(&git_root, &repo_root)?;
     let Some(task) = task else {
         println!("No runnable tasks");
         return Ok(());
