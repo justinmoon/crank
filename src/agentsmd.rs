@@ -32,8 +32,9 @@ Two tools in one:
 - crank run [--workflow <workflow-id>] [--once] [<task-id>]
 - crank review [--skip-tests]
 - crank inbox
-- crank tutorial generate [--worktree <path>] [--merge-commit <sha>]
+- crank tutorial generate [--worktree <path>] [--merge-commit <sha>] [--replace]
 - crank tutorial show <id> [--format md|json]
+- crank tutorial delete <id> [--all]
 "#,
     );
 }

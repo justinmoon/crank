@@ -35,6 +35,10 @@ pub struct GenerateArgs {
     /// Override tutorial output directory
     #[arg(long)]
     pub output_dir: Option<String>,
+
+    /// Replace existing tutorial if it exists
+    #[arg(long)]
+    pub replace: bool,
 }
 
 #[derive(Args, Clone)]
@@ -60,6 +64,7 @@ pub fn run_command(cmd: TutorialCommand) -> Result<()> {
                 merge_commit: args.merge_commit,
                 workflow_id: args.workflow_id,
                 output_dir: args.output_dir.map(PathBuf::from),
+                replace: args.replace,
             };
             tutorial::generate_tutorial(&options)?;
         }

@@ -45,7 +45,7 @@ if [[ -z "$merge_commit" ]]; then
 fi
 
 set +e
-crank tutorial generate --worktree "$worktree" --base "$base" --merge-commit "$merge_commit"
+crank tutorial generate --replace --worktree "$worktree" --base "$base" --merge-commit "$merge_commit"
 status=$?
 set -e
 

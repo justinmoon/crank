@@ -31,6 +31,7 @@ Proposed flags:
 - `--merge-commit <sha>`: merge commit SHA (if omitted, infer last merge to base).
 - `--workflow-id <id>`: optional workflow id for metadata.
 - `--output-dir <path>`: override tutorial storage location.
+- `--replace`: overwrite existing tutorial.
 
 ### `crank tutorial show <id>`
 Print the tutorial in a plain format (markdown or json) for scripting.
@@ -86,8 +87,8 @@ Store repo-scoped tutorials under `.crank/tutorials/`.
 
 3) Step Walkthrough (pairs)
 - Each step is an explanation + diff.
-- Default heuristic: one step per commit in `base..merge_commit` order.
-- Alternative grouping: one step per file group if commit history is noisy.
+- Default: LLM-defined steps based on diff hunks.
+- Fallback: one step per file if LLM is unavailable.
 
 Each step is stored as:
 - `steps/NN.md`: explanation markdown
@@ -177,3 +178,67 @@ Phase 4: Jump-to-definition
 - Should tutorial storage live under repo `.crank/` or user `~/.crank/`?
 - How aggressively should we prune old tutorials/worktrees?
 - Should summary include workflow step logs (if present)?
+
+## Iteration 2: Teacher Mode (Requested UX)
+
+### Goals
+- Inbox `Enter` opens the tutorial viewer.
+- Viewer starts with the original ticket on top, followed by an AI-generated summary.
+- Steps are **LLM-defined**, not commit-based.
+- Navigate tutorial steps with `h` (back) and `l` (next) when the viewer has focus.
+- Each step shows markdown on top and diff in an embedded `$EDITOR` below.
+
+### Viewer Layout (Teacher Mode)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ [Tutorial Title]  Step 2/6  (h/l navigate, ? help, Esc exit)  │
+├──────────────────────────────────────────────────────────────┤
+│ Issue (rendered markdown)                                    │
+│ Summary (rendered markdown)                                  │
+├──────────────────────────────────────────────────────────────┤
+│ Step Explanation (rendered markdown)                         │
+├──────────────────────────────────────────────────────────────┤
+│ Embedded $EDITOR displaying diff for the current step        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Focus Model
+- Viewer focus = TUI intercepts keys (`h/l`, `Esc`, `?`).
+- Editor focus = keystrokes go to `$EDITOR`; TUI hotkeys disabled.
+- `Ctrl-\` toggles focus between viewer/editor.
+
+### Tutorial Step Model (LLM-generated)
+Steps are computed by the tutorial generator, not by commits:
+
+1) Build diff sections:
+   - Run `git diff --no-color <base>..<merge_commit>`.
+   - Split into hunks (file + hunk header + body).
+   - Assign each hunk a stable `diff_id`.
+2) Ask LLM to plan steps:
+   - Provide hunk summaries (file path, header, sample lines).
+   - Ask for ordered sections: `{ title, explanation, diff_ids[] }`.
+3) Materialize steps:
+   - For each step, concatenate the selected hunks into `steps/NN.diff`.
+   - Write explanation to `steps/NN.md`.
+
+Fallback if LLM unavailable:
+- Group hunks by file, one step per file.
+
+### Key Bindings (Proposed)
+- Viewer focus:
+  - `h` back, `l` next
+  - `?` help
+  - `Esc` exit
+  - `Ctrl-\` toggle focus to editor
+- Editor focus:
+  - `Ctrl-\` returns to viewer
+  - `Esc` is passed to editor
+
+### Storage Changes
+Tutorial manifest should record:
+- `steps[].diff_ids` (list of hunk IDs)
+- `steps[].title`
+- `steps[].explanation`
+
+This allows regenerating or re-opening a tutorial without recomputing LLM output.

@@ -42,8 +42,11 @@ pub struct TutorialManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TutorialStep {
     pub index: u32,
-    pub commit: String,
-    pub subject: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub diff_ids: Vec<String>,
+    #[serde(default)]
     pub files: Vec<String>,
     pub note: String,
     pub diff: String,
@@ -56,6 +59,7 @@ pub struct TutorialGenerateOptions {
     pub merge_commit: Option<String>,
     pub workflow_id: Option<String>,
     pub output_dir: Option<PathBuf>,
+    pub replace: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,75 +104,119 @@ pub fn generate_tutorial(options: &TutorialGenerateOptions) -> Result<String> {
     );
     let tutorial_dir = output_root.join(&tutorial_id);
     if tutorial_dir.exists() {
-        return Err(anyhow!(
-            "tutorial already exists: {}",
-            tutorial_dir.display()
-        ));
+        if options.replace {
+            fs::remove_dir_all(&tutorial_dir).with_context(|| {
+                format!("failed to remove existing tutorial: {}", tutorial_dir.display())
+            })?;
+        } else {
+            return Err(anyhow!(
+                "tutorial already exists: {} (rerun with --replace to overwrite it)",
+                tutorial_dir.display()
+            ));
+        }
     }
 
-    crank_io::ensure_dir(&tutorial_dir)?;
-    crank_io::ensure_dir(&tutorial_dir.join("steps"))?;
-
-    let issue_ids = load_issue_ids(&worktree);
-    let (mut title, issue_content) = load_issue_content(&worktree, &repo_root, &issue_ids);
-
-    let range = resolve_commit_range(&repo_root, &merge_commit, &base)?;
-    let commits = load_commits(&repo_root, &range)?;
-
-    let summary = build_summary(
-        &repo_root,
-        &range,
-        &merge_commit_short,
-        &source_branch,
-        &base,
-        &commits,
-    )?;
-    if title.trim().is_empty() {
-        title = derive_title(&repo_root, &commits, &source_branch, &base)?;
+    let temp_dir = output_root.join(format!("{tutorial_id}.tmp-{}", std::process::id()));
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir).ok();
     }
-    let summary_path = tutorial_dir.join("summary.md");
-    crank_io::write_string(&summary_path, &summary)?;
+    crank_io::ensure_dir(&temp_dir)?;
+    crank_io::ensure_dir(&temp_dir.join("steps"))?;
 
-    let issue_path = tutorial_dir.join("issue.md");
-    crank_io::write_string(&issue_path, &issue_content)?;
+    let result = (|| -> Result<String> {
+        let issue_ids = load_issue_ids(&worktree);
+        let (mut title, issue_content) = load_issue_content(&worktree, &repo_root, &issue_ids);
 
-    let steps = write_steps(&repo_root, &tutorial_dir, &commits)?;
+        let range = resolve_commit_range(&repo_root, &merge_commit, &base)?;
+        let commits = load_commits(&repo_root, &range)?;
 
-    let created_at = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let manifest = TutorialManifest {
-        id: tutorial_id.clone(),
-        title: title.clone(),
-        issue_ids: issue_ids.clone(),
-        created_at: created_at.clone(),
-        merge_commit: merge_commit.clone(),
-        base_branch: base.clone(),
-        source_branch: source_branch.clone(),
-        status: "unread".to_string(),
-        workflow_id: options.workflow_id.clone(),
-        steps: steps.clone(),
-    };
+        let diff_hunks = build_diff_hunks(&repo_root, &range)?;
+        let step_plans =
+            plan_steps(&repo_root, &diff_hunks, &issue_content, &base, &merge_commit)
+                .unwrap_or_else(|_| fallback_steps(&diff_hunks));
 
-    let manifest_path = tutorial_dir.join("tutorial.json");
-    write_manifest(&manifest_path, &manifest)?;
+        let summary = match build_summary_with_llm(
+            &repo_root,
+            &issue_content,
+            &step_plans,
+            &diff_hunks,
+            &base,
+            &merge_commit,
+        ) {
+            Ok(summary) => summary,
+            Err(_) => build_summary_fallback(
+                &repo_root,
+                &merge_commit_short,
+                &source_branch,
+                &base,
+                &commits,
+                &diff_hunks,
+            )?,
+        };
+        if title.trim().is_empty() {
+            title = derive_title(&repo_root, &commits, &source_branch, &base)?;
+        }
+        let summary_path = temp_dir.join("summary.md");
+        crank_io::write_string(&summary_path, &summary)?;
 
-    let mut index = load_index_at(&output_root)?;
-    index.retain(|entry| entry.id != tutorial_id);
-    index.push(TutorialIndexEntry {
-        id: tutorial_id.clone(),
-        title,
-        issue_ids,
-        created_at,
-        merge_commit,
-        base_branch: base,
-        source_branch,
-        status: "unread".to_string(),
-        steps: steps.len(),
-    });
-    index.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    save_index_at(&output_root, &index)?;
+        let issue_path = temp_dir.join("issue.md");
+        crank_io::write_string(&issue_path, &issue_content)?;
 
-    println!("Generated tutorial: {tutorial_id}");
-    Ok(tutorial_id)
+        let steps = write_steps_from_plan(&temp_dir, &step_plans, &diff_hunks)?;
+
+        let created_at = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let manifest = TutorialManifest {
+            id: tutorial_id.clone(),
+            title: title.clone(),
+            issue_ids: issue_ids.clone(),
+            created_at: created_at.clone(),
+            merge_commit: merge_commit.clone(),
+            base_branch: base.clone(),
+            source_branch: source_branch.clone(),
+            status: "unread".to_string(),
+            workflow_id: options.workflow_id.clone(),
+            steps: steps.clone(),
+        };
+
+        let manifest_path = temp_dir.join("tutorial.json");
+        write_manifest(&manifest_path, &manifest)?;
+
+        if tutorial_dir.exists() {
+            fs::remove_dir_all(&tutorial_dir).ok();
+        }
+        fs::rename(&temp_dir, &tutorial_dir).with_context(|| {
+            format!(
+                "failed to finalize tutorial: {} -> {}",
+                temp_dir.display(),
+                tutorial_dir.display()
+            )
+        })?;
+
+        let mut index = load_index_at(&output_root)?;
+        index.retain(|entry| entry.id != tutorial_id);
+        index.push(TutorialIndexEntry {
+            id: tutorial_id.clone(),
+            title,
+            issue_ids,
+            created_at,
+            merge_commit,
+            base_branch: base,
+            source_branch,
+            status: "unread".to_string(),
+            steps: steps.len(),
+        });
+        index.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        save_index_at(&output_root, &index)?;
+
+        println!("Generated tutorial: {tutorial_id}");
+        Ok(tutorial_id)
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    result
 }
 
 pub fn show_tutorial(
@@ -362,77 +410,117 @@ fn load_commits(repo_root: &Path, range: &(String, String)) -> Result<Vec<String
     Ok(commits)
 }
 
-fn write_steps(
-    repo_root: &Path,
+fn write_steps_from_plan(
     tutorial_dir: &Path,
-    commits: &[String],
+    plans: &[StepPlan],
+    hunks: &[DiffHunk],
 ) -> Result<Vec<TutorialStep>> {
     let mut steps = Vec::new();
-    for (idx, commit) in commits.iter().enumerate() {
-        let subject = git_output(repo_root, &["show", "-s", "--format=%s", commit])?;
-        let files = git_list_files(repo_root, commit)?;
-        let note_text = build_step_note(&subject, commit, &files, idx + 1);
-        let diff_text = git_output(repo_root, &["show", "--no-color", "--format=", commit])?;
+    let hunk_map: std::collections::HashMap<&str, &DiffHunk> =
+        hunks.iter().map(|hunk| (hunk.id.as_str(), hunk)).collect();
+
+    for (idx, plan) in plans.iter().enumerate() {
+        let mut diff_parts = Vec::new();
+        let mut files = Vec::new();
+        for diff_id in &plan.diff_ids {
+            if let Some(hunk) = hunk_map.get(diff_id.as_str()) {
+                diff_parts.push(hunk.content.clone());
+                if !files.contains(&hunk.file) {
+                    files.push(hunk.file.clone());
+                }
+            }
+        }
+
+        if diff_parts.is_empty() {
+            continue;
+        }
 
         let index_num = idx + 1;
         let note_name = format!("steps/{index_num:02}.md");
         let diff_name = format!("steps/{index_num:02}.diff");
+
+        let note_text = build_step_note(&plan.title, &plan.explanation, index_num);
+        let diff_text = diff_parts.join("\n");
 
         crank_io::write_string(&tutorial_dir.join(&note_name), &note_text)?;
         crank_io::write_string(&tutorial_dir.join(&diff_name), &diff_text)?;
 
         steps.push(TutorialStep {
             index: index_num as u32,
-            commit: commit.clone(),
-            subject,
+            title: plan.title.clone(),
+            diff_ids: plan.diff_ids.clone(),
             files,
             note: note_name,
             diff: diff_name,
         });
     }
+
     Ok(steps)
 }
 
-fn build_step_note(subject: &str, commit: &str, files: &[String], index: usize) -> String {
-    let short = short_commit(commit);
+fn build_step_note(title: &str, explanation: &str, index: usize) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("# Step {index}: {subject}"));
+    lines.push(format!("# Step {index}: {title}"));
     lines.push(String::new());
-    lines.push(format!("- Commit: {short}"));
-
-    if files.is_empty() {
-        lines.push("- Files: (none)".to_string());
-    } else if files.len() <= 6 {
-        lines.push(format!("- Files: {}", files.join(", ")));
-    } else {
-        let head = files[..6].join(", ");
-        lines.push(format!("- Files: {head} (+{} more)", files.len() - 6));
-    }
-
+    lines.push(explanation.trim().to_string());
     lines.push(String::new());
     lines.join("\n")
 }
 
-fn git_list_files(repo_root: &Path, commit: &str) -> Result<Vec<String>> {
-    let output = git_output(repo_root, &["show", "--name-only", "--format=", commit])?;
-    Ok(output
-        .lines()
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
-        .map(|line| line.to_string())
-        .collect())
+fn build_summary_with_llm(
+    repo_root: &Path,
+    issue: &str,
+    plans: &[StepPlan],
+    hunks: &[DiffHunk],
+    base_branch: &str,
+    merge_commit: &str,
+) -> Result<String> {
+    let diff_overview = summarize_hunks(hunks);
+    let step_overview = plans
+        .iter()
+        .enumerate()
+        .map(|(idx, plan)| {
+            let title = plan.title.trim();
+            if title.is_empty() {
+                format!("Step {}: (untitled)", idx + 1)
+            } else {
+                format!("Step {}: {}", idx + 1, title)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let prompt = format!(
+        "You are generating a short tutorial summary for a teammate.\n\
+Repository changes: {base_branch}..{merge_commit}\n\n\
+Issue:\n{issue}\n\n\
+Diff overview:\n{diff_overview}\n\n\
+Planned steps:\n{step_overview}\n\n\
+Write a concise markdown summary. Start with '# Summary' and use bullets. \
+Mention tests if known; if unknown, say 'Tests: not recorded'."
+    );
+
+    let response = run_opencode_prompt(repo_root, &prompt)?;
+    let trimmed = response.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("LLM summary was empty"));
+    }
+    if trimmed.starts_with("# Summary") {
+        return Ok(trimmed.to_string());
+    }
+    Ok(format!("# Summary\n\n{trimmed}"))
 }
 
-fn build_summary(
+fn build_summary_fallback(
     repo_root: &Path,
-    range: &(String, String),
     merge_commit_short: &str,
     source_branch: &str,
     base_branch: &str,
     commits: &[String],
+    hunks: &[DiffHunk],
 ) -> Result<String> {
     let mut lines = Vec::new();
-    lines.push("# Summary".to_string());
+    lines.push("# Summary (fallback)".to_string());
     lines.push(format!(
         "- Merged {source_branch} into {base_branch} at {merge_commit_short}."
     ));
@@ -457,21 +545,316 @@ fn build_summary(
         }
     }
 
-    let files = git_output(
-        repo_root,
-        &[
-            "diff",
-            "--name-only",
-            &format!("{}..{}", range.0, range.1),
-        ],
-    )?;
-    let file_count = files.lines().filter(|line| !line.trim().is_empty()).count();
+    let file_count = hunks
+        .iter()
+        .map(|hunk| hunk.file.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     if file_count > 0 {
         lines.push(format!("- Files touched: {file_count}"));
     }
     lines.push("- Tests: not recorded".to_string());
     lines.push(String::new());
     Ok(lines.join("\n"))
+}
+
+#[derive(Debug, Clone)]
+struct DiffHunk {
+    id: String,
+    file: String,
+    header: String,
+    content: String,
+    sample: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StepPlan {
+    title: String,
+    explanation: String,
+    diff_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StepPlanResponse {
+    steps: Vec<StepPlan>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AltPlanResponse {
+    sections: Vec<AltPlanSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AltPlanSection {
+    title: String,
+    explanation: String,
+    #[serde(default, rename = "diffId")]
+    diff_id: String,
+    #[serde(default)]
+    diff_ids: Vec<String>,
+}
+
+fn build_diff_hunks(repo_root: &Path, range: &(String, String)) -> Result<Vec<DiffHunk>> {
+    let diff = git_output(
+        repo_root,
+        &[
+            "diff",
+            "--no-color",
+            &format!("{}..{}", range.0, range.1),
+        ],
+    )?;
+
+    if diff.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut hunks = Vec::new();
+    let mut file_header: Vec<String> = Vec::new();
+    let mut current_file = String::new();
+    let mut current_hunk: Vec<String> = Vec::new();
+    let mut current_header = String::new();
+    let mut file_has_hunk = false;
+    let mut index = 1;
+
+    let flush_hunk = |hunks: &mut Vec<DiffHunk>,
+                          file_header: &[String],
+                          current_file: &str,
+                          current_header: &str,
+                          current_hunk: &mut Vec<String>,
+                          index: &mut usize| {
+        if current_hunk.is_empty() {
+            return;
+        }
+        let mut content_lines = Vec::new();
+        content_lines.extend(file_header.iter().cloned());
+        content_lines.extend(current_hunk.iter().cloned());
+        let content = content_lines.join("\n");
+        let sample = current_hunk
+            .iter()
+            .take(6)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        hunks.push(DiffHunk {
+            id: format!("diff-{index:03}"),
+            file: current_file.to_string(),
+            header: current_header.to_string(),
+            content,
+            sample,
+        });
+        current_hunk.clear();
+        *index += 1;
+    };
+
+    let flush_file_without_hunks = |hunks: &mut Vec<DiffHunk>,
+                                        file_header: &[String],
+                                        current_file: &str,
+                                        index: &mut usize| {
+        if file_header.is_empty() || current_file.is_empty() {
+            return;
+        }
+        let content = file_header.join("\n");
+        hunks.push(DiffHunk {
+            id: format!("diff-{index:03}"),
+            file: current_file.to_string(),
+            header: "file change".to_string(),
+            content,
+            sample: file_header.iter().take(6).cloned().collect::<Vec<_>>().join("\n"),
+        });
+        *index += 1;
+    };
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            if file_has_hunk {
+                flush_hunk(
+                    &mut hunks,
+                    &file_header,
+                    &current_file,
+                    &current_header,
+                    &mut current_hunk,
+                    &mut index,
+                );
+            } else {
+                flush_file_without_hunks(&mut hunks, &file_header, &current_file, &mut index);
+            }
+
+            file_header.clear();
+            current_hunk.clear();
+            current_header.clear();
+            file_has_hunk = false;
+            current_file = parse_diff_file(line).unwrap_or_else(|| "unknown".to_string());
+            file_header.push(line.to_string());
+            continue;
+        }
+
+        if current_file.is_empty() {
+            continue;
+        }
+
+        if line.starts_with("@@") {
+            if file_has_hunk {
+                flush_hunk(
+                    &mut hunks,
+                    &file_header,
+                    &current_file,
+                    &current_header,
+                    &mut current_hunk,
+                    &mut index,
+                );
+            }
+            file_has_hunk = true;
+            current_header = line.to_string();
+            current_hunk.push(line.to_string());
+            continue;
+        }
+
+        if file_has_hunk {
+            current_hunk.push(line.to_string());
+        } else {
+            file_header.push(line.to_string());
+        }
+    }
+
+    if file_has_hunk {
+        flush_hunk(
+            &mut hunks,
+            &file_header,
+            &current_file,
+            &current_header,
+            &mut current_hunk,
+            &mut index,
+        );
+    } else {
+        flush_file_without_hunks(&mut hunks, &file_header, &current_file, &mut index);
+    }
+
+    Ok(hunks)
+}
+
+fn parse_diff_file(line: &str) -> Option<String> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let raw = parts[3];
+    if let Some(stripped) = raw.strip_prefix("b/") {
+        return Some(stripped.to_string());
+    }
+    Some(raw.to_string())
+}
+
+fn summarize_hunks(hunks: &[DiffHunk]) -> String {
+    hunks
+        .iter()
+        .map(|hunk| {
+            let header = if hunk.header.trim().is_empty() {
+                "(no header)"
+            } else {
+                hunk.header.as_str()
+            };
+            format!(
+                "ID: {}\nFile: {}\nHeader: {}\nSample:\n{}",
+                hunk.id, hunk.file, header, hunk.sample
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn plan_steps(
+    repo_root: &Path,
+    hunks: &[DiffHunk],
+    issue: &str,
+    base_branch: &str,
+    merge_commit: &str,
+) -> Result<Vec<StepPlan>> {
+    if hunks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let diff_summary = summarize_hunks(hunks);
+    let prompt = format!(
+        "You are a senior engineer preparing a tutorial for a teammate.\n\
+We are reviewing git changes from {base_branch}..{merge_commit}.\n\n\
+Issue:\n{issue}\n\n\
+Diff summaries:\n{diff_summary}\n\n\
+Plan ordered tutorial steps. Each step must reference one or more diff IDs.\n\
+Return JSON only matching:\n\
+{{\"steps\":[{{\"title\":\"...\",\"explanation\":\"...\",\"diff_ids\":[\"diff-001\",...]}}]}}"
+    );
+
+    let response = run_opencode_prompt(repo_root, &prompt)?;
+    let cleaned = extract_json(&response)?;
+    let mut planned: StepPlanResponse = match serde_json::from_str(&cleaned) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            let alt: AltPlanResponse = serde_json::from_str(&cleaned)
+                .with_context(|| "failed to parse step plan JSON")?;
+            StepPlanResponse {
+                steps: alt
+                    .sections
+                    .into_iter()
+                    .map(|section| {
+                        let mut diff_ids = section.diff_ids;
+                        if diff_ids.is_empty() && !section.diff_id.trim().is_empty() {
+                            diff_ids.push(section.diff_id);
+                        }
+                        StepPlan {
+                            title: section.title,
+                            explanation: section.explanation,
+                            diff_ids,
+                        }
+                    })
+                    .collect(),
+            }
+        }
+    };
+
+    let known_ids: std::collections::HashSet<&str> =
+        hunks.iter().map(|hunk| hunk.id.as_str()).collect();
+    planned.steps.iter_mut().for_each(|step| {
+        step.diff_ids.retain(|id| known_ids.contains(id.as_str()));
+    });
+    planned.steps.retain(|step| !step.diff_ids.is_empty());
+
+    if planned.steps.is_empty() {
+        return Err(anyhow!("no tutorial steps generated"));
+    }
+
+    Ok(planned.steps)
+}
+
+fn fallback_steps(hunks: &[DiffHunk]) -> Vec<StepPlan> {
+    let mut by_file: std::collections::BTreeMap<&str, Vec<String>> = std::collections::BTreeMap::new();
+    for hunk in hunks {
+        by_file
+            .entry(hunk.file.as_str())
+            .or_default()
+            .push(hunk.id.clone());
+    }
+
+    by_file
+        .into_iter()
+        .map(|(file, ids)| StepPlan {
+            title: format!("Update {file}"),
+            explanation: format!("Changes grouped for `{file}`."),
+            diff_ids: ids,
+        })
+        .collect()
+}
+
+fn extract_json(raw: &str) -> Result<String> {
+    if let Ok(_) = serde_json::from_str::<serde_json::Value>(raw) {
+        return Ok(raw.to_string());
+    }
+    let start = raw.find('{').ok_or_else(|| anyhow!("no JSON found"))?;
+    let end = raw.rfind('}').ok_or_else(|| anyhow!("no JSON found"))?;
+    if end <= start {
+        return Err(anyhow!("invalid JSON bounds"));
+    }
+    Ok(raw[start..=end].to_string())
 }
 
 fn load_issue_ids(worktree: &Path) -> Vec<String> {
@@ -614,6 +997,101 @@ fn git_output(cwd: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+fn run_opencode_prompt(cwd: &Path, prompt: &str) -> Result<String> {
+    let output = Command::new("opencode")
+        .arg("run")
+        .arg("--format")
+        .arg("json")
+        .arg("--agent")
+        .arg("general")
+        .arg(prompt)
+        .current_dir(cwd)
+        .output()
+        .context("failed to run opencode")?;
+
+    let mut combined = String::new();
+    combined.push_str(&String::from_utf8_lossy(&output.stdout));
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+
+    if !output.status.success() {
+        return Err(anyhow!("opencode failed: {}", combined.trim()));
+    }
+
+    let response = extract_response_text(&combined);
+    if response.trim().is_empty() {
+        if combined.trim().is_empty() {
+            return Err(anyhow!("opencode returned empty response"));
+        }
+        return Ok(combined.trim().to_string());
+    }
+
+    Ok(response)
+}
+
+fn extract_response_text(json_events: &str) -> String {
+    let mut parts = vec![];
+
+    for line in json_events.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let payload = trimmed
+            .strip_prefix("data:")
+            .map(str::trim)
+            .unwrap_or(trimmed);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+            let text = collect_text_from_value(&json);
+            if !text.is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+
+    parts.join("")
+}
+
+fn collect_text_from_value(value: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+
+    match value {
+        serde_json::Value::String(text) => {
+            parts.push(text.clone());
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                let text = collect_text_from_value(item);
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, item) in map {
+                if key == "text" {
+                    if let Some(text) = item.as_str() {
+                        parts.push(text.to_string());
+                        continue;
+                    }
+                }
+
+                let text = collect_text_from_value(item);
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    parts.join("")
+}
+
 fn repo_root_from(worktree: &Path) -> Result<PathBuf> {
     let output = Command::new("git")
         .arg("-C")
@@ -637,14 +1115,6 @@ fn sanitize_id(value: &str) -> String {
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect()
-}
-
-fn short_commit(commit: &str) -> String {
-    if commit.len() <= 8 {
-        commit.to_string()
-    } else {
-        commit[..8].to_string()
-    }
 }
 
 fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
@@ -677,8 +1147,8 @@ struct TutorialOutput {
 #[derive(Serialize)]
 struct TutorialStepOutput {
     index: u32,
-    commit: String,
-    subject: String,
+    title: String,
+    diff_ids: Vec<String>,
     files: Vec<String>,
     note: String,
     diff: String,
@@ -691,8 +1161,8 @@ impl TutorialOutput {
             .iter()
             .map(|step| TutorialStepOutput {
                 index: step.step.index,
-                commit: step.step.commit.clone(),
-                subject: step.step.subject.clone(),
+                title: step.step.title.clone(),
+                diff_ids: step.step.diff_ids.clone(),
                 files: step.step.files.clone(),
                 note: step.note.clone(),
                 diff: step.diff.clone(),
