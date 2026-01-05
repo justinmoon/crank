@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::orchestrator::{alerts, controls, logging::Logger, markers, opencode};
+use crate::orchestrator::{alerts, controls, logging::Logger, markers, mux, opencode};
 use crate::task::branch;
 use crate::task::git as task_git;
 use crate::task::model::{
@@ -27,10 +27,7 @@ pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>)
     if id == 0 {
         return Err(anyhow!("worker id must be at least 1"));
     }
-    if std::env::var("TMUX").unwrap_or_default().is_empty() {
-        return Err(anyhow!("crank worker must run inside tmux"));
-    }
-    let tmux_pane = std::env::var("TMUX_PANE").context("TMUX_PANE is not set")?;
+    let mux_target = mux::MuxTarget::from_env()?;
 
     let repo_root = task_git::repo_root()?;
     let tasks_root = repo_root.clone();
@@ -53,7 +50,7 @@ pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>)
 
     let ctx = WorkerContext {
         worker_id: id,
-        tmux_pane: &tmux_pane,
+        mux_target: &mux_target,
         logger: &logger,
         repo_root: &repo_root,
         mode,
@@ -67,10 +64,19 @@ pub async fn run_worker(id: u16, mode: SupervisionMode, project: Option<String>)
 
 struct WorkerContext<'a> {
     worker_id: u16,
-    tmux_pane: &'a str,
+    mux_target: &'a mux::MuxTarget,
     logger: &'a Logger,
     repo_root: &'a Path,
     mode: SupervisionMode,
+}
+
+impl<'a> WorkerContext<'a> {
+    fn tmux_pane(&self) -> Option<&'a str> {
+        match self.mux_target {
+            mux::MuxTarget::Tmux { pane } => Some(pane.as_str()),
+            _ => None,
+        }
+    }
 }
 
 async fn run_unsupervised(
@@ -178,7 +184,7 @@ async fn run_task(ctx: &WorkerContext<'_>, task: &Task) -> Result<()> {
         "info",
         &format!("created worktree {} at {}", branch, worktree_path.display()),
     )?;
-    rename_tmux_window(ctx.tmux_pane, &branch)?;
+    mux::rename_target(ctx.mux_target, &branch)?;
 
     store::write_current_task_marker(&worktree_path, &task.id)
         .context("failed to write current task marker")?;
@@ -215,7 +221,7 @@ async fn supervise_task(
         agent,
         ctx.mode,
         ctx.worker_id,
-        ctx.tmux_pane,
+        ctx.mux_target,
         ctx.logger,
     )
     .await?;
@@ -252,7 +258,7 @@ async fn supervise_task(
 
         if agent_session.child_exited()? {
             log_and_print(ctx.logger, "info", "agent exited; restarting")?;
-            agent_session.restart_child(task, worktree_path, prompt, ctx.tmux_pane)?;
+            agent_session.restart_child(task, worktree_path, prompt, ctx.mux_target)?;
         }
 
         if !help_requested && !pause_requested {
@@ -280,7 +286,7 @@ async fn supervise_task(
                         >= CODEX_IDLE_NUDGE_AFTER
                     {
                         log_and_print(ctx.logger, "info", "codex idle; nudging")?;
-                        controls::nudge_task(&task.id, ctx.tmux_pane)?;
+                        controls::nudge_task(&task.id, ctx.mux_target)?;
                         start_time = SystemTime::now();
                     }
                 }
@@ -316,7 +322,8 @@ fn emit_alert(
     kind: alerts::AlertKind,
     message: Option<String>,
 ) -> Result<()> {
-    if let Err(err) = alerts::create_task_alert(task, kind, message, ctx.tmux_pane) {
+    let tmux_pane = ctx.tmux_pane().unwrap_or("");
+    if let Err(err) = alerts::create_task_alert(task, kind, message, tmux_pane) {
         ctx.logger
             .log("warn", &format!("failed to create alert: {err}"))?;
         return Ok(());
@@ -341,7 +348,7 @@ impl AgentSession {
         kind: AgentKind,
         mode: SupervisionMode,
         worker_id: u16,
-        tmux_pane: &str,
+        mux_target: &mux::MuxTarget,
         logger: &Logger,
     ) -> Result<Self> {
         match kind {
@@ -363,14 +370,14 @@ impl AgentSession {
             }
             AgentKind::Codex => Ok(Self {
                 kind,
-                child: Some(spawn_codex(task, worktree_path, prompt, tmux_pane, mode)?),
+                child: Some(spawn_codex(task, worktree_path, prompt, mux_target, mode)?),
                 opencode: None,
                 session_id: None,
                 mode,
             }),
             AgentKind::Claude => Ok(Self {
                 kind,
-                child: Some(spawn_claude(task, worktree_path, prompt, tmux_pane, mode)?),
+                child: Some(spawn_claude(task, worktree_path, prompt, mux_target, mode)?),
                 opencode: None,
                 session_id: None,
                 mode,
@@ -398,7 +405,7 @@ impl AgentSession {
         task: &Task,
         worktree_path: &Path,
         prompt: &str,
-        tmux_pane: &str,
+        mux_target: &mux::MuxTarget,
     ) -> Result<()> {
         let child = match self.kind {
             AgentKind::Opencode => {
@@ -407,8 +414,8 @@ impl AgentSession {
                     .ok_or_else(|| anyhow!("opencode session missing"))?;
                 opencode::spawn_attach(server, session_id, worktree_path, self.mode)?
             }
-            AgentKind::Codex => spawn_codex(task, worktree_path, prompt, tmux_pane, self.mode)?,
-            AgentKind::Claude => spawn_claude(task, worktree_path, prompt, tmux_pane, self.mode)?,
+            AgentKind::Codex => spawn_codex(task, worktree_path, prompt, mux_target, self.mode)?,
+            AgentKind::Claude => spawn_claude(task, worktree_path, prompt, mux_target, self.mode)?,
         };
         self.child = Some(child);
         Ok(())
@@ -423,7 +430,7 @@ fn spawn_codex(
     task: &Task,
     worktree_path: &Path,
     prompt: &str,
-    tmux_pane: &str,
+    mux_target: &mux::MuxTarget,
     mode: SupervisionMode,
 ) -> Result<Child> {
     let notify_script = codex_notify_script(worktree_path)?;
@@ -434,9 +441,9 @@ fn spawn_codex(
         .env("CODEX_NOTIFY", &notify_script)
         .env("CODEX_NOTIFY_COMMAND", &notify_script)
         .env("CRANK_TASK_ID", &task.id)
-        .env("CRANK_TMUX_PANE", tmux_pane)
         .env("CRANK_SUPERVISION", mode.as_str())
         .current_dir(worktree_path);
+    apply_mux_env(&mut cmd, mux_target);
     cmd.spawn().context("failed to launch codex")
 }
 
@@ -444,7 +451,7 @@ fn spawn_claude(
     task: &Task,
     worktree_path: &Path,
     prompt: &str,
-    tmux_pane: &str,
+    mux_target: &mux::MuxTarget,
     mode: SupervisionMode,
 ) -> Result<Child> {
     let plugin_dir = claude_plugin_dir(worktree_path)?;
@@ -455,10 +462,17 @@ fn spawn_claude(
         .arg("bypassPermissions")
         .arg(prompt)
         .env("CRANK_TASK_ID", &task.id)
-        .env("CRANK_TMUX_PANE", tmux_pane)
         .env("CRANK_SUPERVISION", mode.as_str())
         .current_dir(worktree_path);
+    apply_mux_env(&mut cmd, mux_target);
     cmd.spawn().context("failed to launch claude")
+}
+
+fn apply_mux_env(cmd: &mut Command, mux_target: &mux::MuxTarget) {
+    cmd.env("CRANK_MUX_TARGET", mux_target.to_env_value());
+    if let mux::MuxTarget::Tmux { pane } = mux_target {
+        cmd.env("CRANK_TMUX_PANE", pane);
+    }
 }
 
 fn terminate_child(child: Option<Child>) {
@@ -530,17 +544,6 @@ fn agent_kind(task: &Task) -> Result<AgentKind> {
         "claude" => Ok(AgentKind::Claude),
         other => Err(anyhow!("unknown coding_agent: {other}")),
     }
-}
-
-fn rename_tmux_window(pane: &str, name: &str) -> Result<()> {
-    let status = Command::new("tmux")
-        .args(["rename-window", "-t", pane, name])
-        .status()
-        .context("failed to rename tmux window")?;
-    if !status.success() {
-        return Err(anyhow!("tmux rename-window failed"));
-    }
-    Ok(())
 }
 
 fn run_direnv_allow(worktree_path: &Path) -> Result<()> {

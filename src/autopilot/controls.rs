@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 
-use crate::orchestrator::markers;
+use crate::orchestrator::{markers, mux};
 
 const NUDGE_MESSAGE_SUPERVISED: &str = "Continue. If blocked, run crank ask-for-help \"<msg>\". Run tests via just; commit changes (clean git status); run the merge workflow until it passes.";
 const NUDGE_MESSAGE_UNSUPERVISED: &str =
@@ -40,14 +39,11 @@ pub fn pause(repo_root: &Path, clear: bool) -> Result<Option<PathBuf>> {
 
 pub fn nudge(repo_root: &Path, pane: &str) -> Result<()> {
     let task_id = markers::read_current_task_id(repo_root)?;
-    nudge_task(&task_id, pane)
+    let target = mux::MuxTarget::from_pane_arg(pane)?;
+    nudge_task(&task_id, &target)
 }
 
-pub fn nudge_task(task_id: &str, pane: &str) -> Result<()> {
-    let pane = pane.trim();
-    if pane.is_empty() {
-        return Err(anyhow!("tmux pane is required"));
-    }
+pub fn nudge_task(task_id: &str, target: &mux::MuxTarget) -> Result<()> {
     if markers::merged_marker_exists(task_id)? {
         return Ok(());
     }
@@ -69,13 +65,7 @@ pub fn nudge_task(task_id: &str, pane: &str) -> Result<()> {
         NUDGE_MESSAGE_SUPERVISED
     };
 
-    let status = Command::new("tmux")
-        .args(["send-keys", "-t", pane, message, "Enter"])
-        .status()
-        .context("failed to send tmux nudge")?;
-    if !status.success() {
-        return Err(anyhow!("tmux send-keys failed"));
-    }
+    mux::send_nudge(target, message)?;
 
     Ok(())
 }

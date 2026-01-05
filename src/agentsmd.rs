@@ -6,7 +6,7 @@ Tool: project ticketing + agent orchestration. Replace side systems.
 Think: single source of truth. Task -> worktree -> agent -> workflow. Keep all tickets here.
 Two tools in one:
 - Ticketing: crank task (create/next/claim/done/dep)
-- Orchestration: crank tmux/worker/nudge/pause/ask-for-help/build/run/review
+- Orchestration: crank tmux/zellij/worker/nudge/pause/ask-for-help/build/run/review
 
 ## Supervision tutorial
 - Tasks must declare `supervision: supervised|unsupervised` in frontmatter.
@@ -23,7 +23,8 @@ Two tools in one:
 - crank task claim --project <name> [--json]
 - crank task done <id> [--pr <num>]
 - crank tmux -c N --mode <supervised|unsupervised> [--project <name>]
-- crank nudge --pane $TMUX_PANE
+- crank zellij -c N --mode <supervised|unsupervised> [--project <name>]
+- crank nudge --pane $TMUX_PANE (or zellij:<pane_id>)
 - crank pause [--clear]
 - crank done [--task <id>]
 - crank ask-for-help "msg"

@@ -100,10 +100,17 @@ pub fn run_tmux(concurrency: u16, mode: SupervisionMode, project: Option<String>
         return Err(anyhow!("failed to create tmux alerts window"));
     }
 
+    if std::env::var("CRANK_TMUX_NO_ATTACH")
+        .map(|value| !value.trim().is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        println!("Created tmux session: {session}");
+        println!("Attach with: tmux attach -t {session}");
+        return Ok(());
+    }
+
     // Attach to the session (replaces current process)
-    let err = Command::new("tmux")
-        .args(["attach", "-t", &session])
-        .exec();
+    let err = Command::new("tmux").args(["attach", "-t", &session]).exec();
     Err(anyhow!("failed to attach to tmux session: {}", err))
 }
 

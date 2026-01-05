@@ -41,6 +41,21 @@ enum Commands {
         project: Option<String>,
     },
 
+    /// Launch zellij orchestrator session
+    Zellij {
+        /// Number of workers to run
+        #[arg(long, short)]
+        concurrency: u16,
+
+        /// Worker mode (supervised or unsupervised)
+        #[arg(long, value_enum)]
+        mode: SupervisionMode,
+
+        /// Filter tasks by project/app name
+        #[arg(long)]
+        project: Option<String>,
+    },
+
     /// Run a tmux worker (internal)
     Worker {
         /// Worker ID (1-based)
@@ -63,9 +78,9 @@ enum Commands {
         message: Vec<String>,
     },
 
-    /// Nudge an agent in a tmux pane
+    /// Nudge an agent in a tmux or zellij pane
     Nudge {
-        /// tmux pane id (from $TMUX_PANE)
+        /// tmux pane id (from $TMUX_PANE) or zellij:<pane_id>
         #[arg(long)]
         pane: String,
     },
@@ -177,6 +192,14 @@ async fn main() -> Result<()> {
             project,
         } => {
             orchestrator::tmux::run_tmux(concurrency, mode, project)?;
+        }
+
+        Commands::Zellij {
+            concurrency,
+            mode,
+            project,
+        } => {
+            orchestrator::zellij::run_zellij(concurrency, mode, project)?;
         }
 
         Commands::Worker { id, mode, project } => {
