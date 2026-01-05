@@ -43,22 +43,12 @@ if ! command -v just >/dev/null 2>&1; then
   die "just is required to run pre-merge"
 fi
 
-cmd=(just pre-merge)
-
-if [[ -n "${IN_NIX_SHELL:-}" ]]; then
-  cmd=(just pre-merge)
-elif command -v nix >/dev/null 2>&1; then
-  cmd=(nix develop -c just pre-merge)
-else
-  die "Run 'nix develop' first (or install nix)"
-fi
-
 if command -v timeout >/dev/null 2>&1; then
   timeout_sec=$((timeout_ms / 1000))
   if [[ "$timeout_sec" -le 0 ]]; then
     timeout_sec=1
   fi
-  timeout "$timeout_sec" "${cmd[@]}"
+  timeout "$timeout_sec" just pre-merge
 else
-  "${cmd[@]}"
+  just pre-merge
 fi

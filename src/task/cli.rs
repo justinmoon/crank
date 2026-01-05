@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
-use crate::task::model::SupervisionMode;
 use crate::task::{deps, workflow};
 
 #[derive(Parser)]
@@ -59,10 +58,6 @@ pub struct CreateArgs {
     /// Priority 1-5 (5=urgent)
     #[arg(short, long)]
     priority: Option<i32>,
-
-    /// Task supervision mode (supervised or unsupervised)
-    #[arg(long, value_enum)]
-    supervision: Option<SupervisionMode>,
 
     /// Open $EDITOR with the task template
     #[arg(short, long, conflicts_with = "oc")]
@@ -193,7 +188,6 @@ pub fn run_subcommand(cmd: TaskCommand) -> Result<()> {
                 title,
                 args.app,
                 args.priority,
-                args.supervision,
                 args.edit,
                 args.oc,
                 args.deps,

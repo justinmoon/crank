@@ -8,7 +8,7 @@ pub(crate) mod git;
 pub(crate) mod model;
 mod prompts;
 pub(crate) mod store;
-pub(crate) mod tui;
+mod tui;
 mod workflow;
 
-pub use claim::{claim_next_task, clear_active_claim};
+pub use claim::claim_next_task;

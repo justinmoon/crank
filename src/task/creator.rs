@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use chrono::Local;
 
-use crate::task::model::{Dependency, SupervisionMode};
+use crate::task::model::Dependency;
 use crate::task::prompts;
 use crate::task::store;
 
@@ -38,12 +38,10 @@ pub fn create_task_file(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
-    supervision: Option<SupervisionMode>,
     deps: &[Dependency],
 ) -> Result<()> {
-    let (title, app, priority, supervision) =
-        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
-    store::create_task_file(git_root, &title, &app, priority, supervision, deps)?;
+    let (title, app, priority) = prompts::prompt_task_fields(git_root, title, app, priority)?;
+    store::create_task_file(git_root, &title, &app, priority, deps)?;
     Ok(())
 }
 
@@ -52,19 +50,17 @@ pub fn create_task_interactive(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
-    supervision: Option<SupervisionMode>,
 ) -> Result<()> {
-    let (title, app, priority, supervision) =
-        prompts::prompt_task_fields(git_root, title, app, priority, supervision)?;
+    let (title, app, priority) = prompts::prompt_task_fields(git_root, title, app, priority)?;
 
     let id = store::generate_id();
     let date = Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("{id}.md");
-    let tasks_dir = crate::crank_io::repo_crank_dir(git_root);
+    let tasks_dir = git_root.join(".crank");
     let task_path = tasks_dir.join(&filename);
     let rel_task_path = format!(".crank/{filename}");
 
-    crate::crank_io::ensure_dir(&tasks_dir).map_err(|err| {
+    std::fs::create_dir_all(&tasks_dir).map_err(|err| {
         anyhow!(
             "failed to create tasks directory: {} ({})",
             tasks_dir.display(),
@@ -72,7 +68,7 @@ pub fn create_task_interactive(
         )
     })?;
 
-    let content = store::task_template(&title, &app, priority, supervision, &date, &[]);
+    let content = store::task_template(&title, &app, priority, &date, &[]);
     store::write_task_file(&task_path, &content)?;
 
     store::open_editor(&task_path)?;

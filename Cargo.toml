@@ -23,11 +23,6 @@ dialoguer = "0.11"
 crossterm = "0.27"
 ratatui = "0.28"
 
-# Embedded editor
-portable-pty = "0.8"
-vt100 = "0.15"
-pulldown-cmark = "0.10"
-
 # Random ID generation
 rand = "0.8"
 

@@ -32,7 +32,7 @@ pub fn repo_root() -> Result<PathBuf> {
 }
 
 pub fn task_path_for_id(git_root: &Path, task_id: &str) -> PathBuf {
-    crate::crank_io::repo_crank_dir(git_root).join(format!("{task_id}.md"))
+    git_root.join(".crank").join(format!("{task_id}.md"))
 }
 
 pub fn git_common_dir_from(path: &Path) -> Result<PathBuf> {

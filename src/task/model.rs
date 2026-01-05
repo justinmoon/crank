@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use chrono::NaiveDate;
-use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 pub const TASK_STATUS_OPEN: &str = "open";
@@ -9,22 +8,6 @@ pub const TASK_STATUS_IN_PROGRESS: &str = "in_progress";
 #[allow(dead_code)]
 pub const TASK_STATUS_NEEDS_HUMAN: &str = "needs_human";
 pub const TASK_STATUS_CLOSED: &str = "closed";
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum SupervisionMode {
-    Supervised,
-    Unsupervised,
-}
-
-impl SupervisionMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SupervisionMode::Supervised => "supervised",
-            SupervisionMode::Unsupervised => "unsupervised",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Dependency {
@@ -44,7 +27,7 @@ pub struct Task {
     pub app: String,
     pub priority: i32,
     pub status: String,
-    pub supervision: SupervisionMode,
+    pub autopilot: bool,
     pub title: String,
     pub depends_on: Vec<Dependency>,
     pub workflow: Option<String>,

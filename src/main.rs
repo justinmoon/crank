@@ -2,12 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod agentsmd;
-mod crank_io;
 mod git;
 mod opencode;
-mod tutorial;
-use task::model::SupervisionMode;
-
 #[path = "autopilot/mod.rs"]
 mod orchestrator;
 mod run;
@@ -32,9 +28,16 @@ enum Commands {
         #[arg(long, short)]
         concurrency: u16,
 
-        /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
-        mode: SupervisionMode,
+        /// Filter tasks by project/app name
+        #[arg(long)]
+        project: Option<String>,
+    },
+
+    /// Launch zellij orchestrator session
+    Zellij {
+        /// Number of workers to run
+        #[arg(long, short)]
+        concurrency: u16,
 
         /// Filter tasks by project/app name
         #[arg(long)]
@@ -46,10 +49,6 @@ enum Commands {
         /// Worker ID (1-based)
         #[arg(long)]
         id: u16,
-
-        /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
-        mode: SupervisionMode,
 
         /// Filter tasks by project/app name
         #[arg(long)]
@@ -63,9 +62,9 @@ enum Commands {
         message: Vec<String>,
     },
 
-    /// Nudge an agent in a tmux pane
+    /// Nudge an agent in a tmux or zellij pane
     Nudge {
-        /// tmux pane id (from $TMUX_PANE)
+        /// tmux pane id (from $TMUX_PANE) or zellij:<pane_id>
         #[arg(long)]
         pane: String,
     },
@@ -75,13 +74,6 @@ enum Commands {
         /// Clear pause marker
         #[arg(long)]
         clear: bool,
-    },
-
-    /// Mark the current task done and notify the worker
-    Done {
-        /// Explicit task id (defaults to $CRANK_TASK_ID or .crank/.current)
-        #[arg(long)]
-        task: Option<String>,
     },
     /// Run agentic code review on a worktree
     Review {
@@ -104,20 +96,6 @@ enum Commands {
     /// Print AGENTS.md-style guide for crank
     #[command(name = "agents.md", alias = "agentsmd")]
     AgentsMd,
-
-    /// Browse merge tutorials (inbox view)
-    Inbox,
-
-    /// Tutorial commands (generate/show)
-    #[command(subcommand)]
-    Tutorial(tutorial::cli::TutorialCommand),
-
-    /// Show active alerts in a tmux popup
-    Alerts {
-        /// Watch for new alerts and auto-pop the list
-        #[arg(long)]
-        watch: bool,
-    },
 
     /// Build a workflow instance from a template
     Build(workflow::BuildArgs),
@@ -149,15 +127,6 @@ async fn main() -> Result<()> {
             agentsmd::print_agentsmd();
         }
 
-        Commands::Inbox => {
-            let repo_root = task::git::repo_root()?;
-            tutorial::inbox::run_inbox(&repo_root)?;
-        }
-
-        Commands::Tutorial(cmd) => {
-            tutorial::cli::run_command(cmd)?;
-        }
-
         Commands::Build(args) => {
             let git_root = task::git::git_root()?;
             workflow::build_template_at(&git_root, &args)?;
@@ -173,14 +142,20 @@ async fn main() -> Result<()> {
 
         Commands::Tmux {
             concurrency,
-            mode,
             project,
         } => {
-            orchestrator::tmux::run_tmux(concurrency, mode, project)?;
+            orchestrator::tmux::run_tmux(concurrency, project)?;
         }
 
-        Commands::Worker { id, mode, project } => {
-            orchestrator::worker::run_worker(id, mode, project).await?;
+        Commands::Zellij {
+            concurrency,
+            project,
+        } => {
+            orchestrator::zellij::run_zellij(concurrency, project)?;
+        }
+
+        Commands::Worker { id, project } => {
+            orchestrator::worker::run_worker(id, project).await?;
         }
 
         Commands::AskForHelp { message } => {
@@ -188,14 +163,6 @@ async fn main() -> Result<()> {
             let repo_root = task::git::git_root()?;
             let path = orchestrator::controls::ask_for_help(&repo_root, &msg)?;
             println!("Wrote help marker: {}", path.display());
-        }
-
-        Commands::Alerts { watch } => {
-            if watch {
-                orchestrator::alerts::run_alerts_watch()?;
-            } else {
-                orchestrator::alerts::run_alerts_picker()?;
-            }
         }
 
         Commands::Nudge { pane } => {
@@ -211,22 +178,6 @@ async fn main() -> Result<()> {
             } else {
                 println!("Resumed nudges");
             }
-        }
-
-        Commands::Done { task } => {
-            let repo_root = task::git::git_root()?;
-            let task_id =
-                if let Some(task_id) = task.or_else(|| std::env::var("CRANK_TASK_ID").ok()) {
-                    task_id
-                } else {
-                    orchestrator::markers::read_current_task_id(&repo_root)?
-                };
-            let path = orchestrator::markers::write_merged_marker(&task_id)?;
-            let task_path = task::git::task_path_for_id(&repo_root, &task_id);
-            if task_path.exists() {
-                task::store::update_task_status(&task_path, task::model::TASK_STATUS_CLOSED)?;
-            }
-            println!("Marked task done: {} ({})", task_id, path.display());
         }
     }
 

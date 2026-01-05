@@ -3,7 +3,6 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use dialoguer::{Input, Select};
 
-use crate::task::model::SupervisionMode;
 use crate::task::store::get_apps;
 
 #[derive(Debug, Clone, Copy)]
@@ -17,12 +16,10 @@ pub fn prompt_task_fields(
     title: Option<String>,
     app: Option<String>,
     priority: Option<i32>,
-    supervision: Option<SupervisionMode>,
-) -> Result<(String, String, i32, SupervisionMode)> {
+) -> Result<(String, String, i32)> {
     let mut title = title.unwrap_or_default();
     let mut app = app.unwrap_or_default();
     let mut priority = priority.unwrap_or(0);
-    let mut supervision = supervision;
 
     if title.trim().is_empty() {
         title = Input::new()
@@ -67,10 +64,6 @@ pub fn prompt_task_fields(
         };
     }
 
-    if supervision.is_none() {
-        supervision = Some(prompt_supervision_mode()?);
-    }
-
     if title.trim().is_empty() {
         return Err(anyhow!("title is required"));
     }
@@ -81,26 +74,7 @@ pub fn prompt_task_fields(
         return Err(anyhow!("priority is required"));
     }
 
-    Ok((
-        title.trim().to_string(),
-        app.trim().to_string(),
-        priority,
-        supervision.ok_or_else(|| anyhow!("supervision is required"))?,
-    ))
-}
-
-pub fn prompt_supervision_mode() -> Result<SupervisionMode> {
-    let options = ["supervised (manual selection)", "unsupervised (auto-claim)"];
-    let selection = Select::new()
-        .with_prompt("Supervision")
-        .items(&options)
-        .default(0)
-        .interact()?;
-    Ok(match selection {
-        0 => SupervisionMode::Supervised,
-        1 => SupervisionMode::Unsupervised,
-        _ => return Err(anyhow!("supervision selection required")),
-    })
+    Ok((title.trim().to_string(), app.trim().to_string(), priority))
 }
 
 pub fn prompt_model() -> Result<String> {

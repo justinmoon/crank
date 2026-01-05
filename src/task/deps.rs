@@ -293,14 +293,13 @@ fn would_create_cycle(tasks: &[Task], from_id: &str, to_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::model::SupervisionMode;
 
     fn task(id: &str, deps: Vec<Dependency>) -> Task {
         Task {
             app: "monorepo".to_string(),
             priority: 3,
             status: "open".to_string(),
-            supervision: SupervisionMode::Unsupervised,
+            autopilot: true,
             title: format!("Task {id}"),
             depends_on: deps,
             workflow: None,

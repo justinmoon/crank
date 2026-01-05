@@ -34,22 +34,7 @@ if [[ -n "$dirty" ]]; then
   die "worktree has uncommitted changes:\n$dirty"
 fi
 
-base_ref="origin/$base"
-
-ahead=$(git rev-list --count "$base_ref..HEAD")
-if [[ "$ahead" == "0" ]]; then
-  current_branch=$(git symbolic-ref --quiet --short HEAD || true)
-
-  # If you're on the base branch itself, merging makes no sense; fail fast.
-  if [[ "$current_branch" == "$base" ]]; then
-    die "no commits to merge; branch is not ahead of $base_ref"
-  fi
-
-  # Allow already-merged feature branches to exit successfully.
-  if git merge-base --is-ancestor HEAD "$base_ref"; then
-    echo "No commits to merge; branch already merged into $base_ref"
-    exit 0
-  fi
-
-  die "no commits to merge; branch is not ahead of $base_ref"
+ahead=$(git rev-list --count "origin/$base..HEAD")
+if [[ "${ahead}" == "0" ]]; then
+  die "no commits to merge; commit changes before running crank merge"
 fi

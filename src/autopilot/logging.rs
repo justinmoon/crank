@@ -45,8 +45,11 @@ pub fn log_file(name: &str) -> Result<std::fs::File> {
 }
 
 pub fn log_dir() -> Result<PathBuf> {
-    let dir = crate::crank_io::user_crank_dir()?.join("logs");
-    crate::crank_io::ensure_dir(&dir)
+    let dir = dirs::home_dir()
+        .context("Could not find home directory")?
+        .join(".crank")
+        .join("logs");
+    std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create log dir: {}", dir.display()))?;
     Ok(dir)
 }

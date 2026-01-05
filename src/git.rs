@@ -13,8 +13,6 @@ pub struct StepResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
 }
 
@@ -50,19 +48,12 @@ pub async fn get_git_root(cwd: &Path) -> Result<PathBuf> {
 
 // Re-export StepResult for opencode module
 impl StepResult {
-    pub fn new(
-        step: &str,
-        status: &str,
-        tail: Option<String>,
-        details: Option<String>,
-        duration_ms: Option<u64>,
-    ) -> Self {
+    pub fn new(step: &str, status: &str, tail: Option<String>, duration_ms: Option<u64>) -> Self {
         Self {
             step: step.to_string(),
             status: status.to_string(),
             exit: if status == "fail" { Some(1) } else { None },
             tail,
-            details,
             duration_ms,
         }
     }

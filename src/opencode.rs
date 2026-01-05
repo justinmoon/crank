@@ -38,7 +38,6 @@ Optional: add context as bullets after the first line."#;
 pub struct ReviewResult {
     pub status: String,
     pub reason: Option<String>,
-    pub details: Option<String>,
 }
 
 /// Send a prompt using the opencode CLI with the review agent.
@@ -49,9 +48,7 @@ async fn send_review_prompt(directory: &str, prompt: &str, timeout_ms: u64) -> R
         .arg("--format")
         .arg("json")
         .arg("--agent")
-        // Opencode's built-in agent list can vary by install.
-        // "review" doesn't exist in some environments, but "general" does.
-        .arg("general")
+        .arg("review")
         .arg(prompt)
         .current_dir(directory)
         .stdout(Stdio::piped())
@@ -59,64 +56,34 @@ async fn send_review_prompt(directory: &str, prompt: &str, timeout_ms: u64) -> R
         .spawn()?;
 
     let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
 
-    let read_stdout = async move {
-        let mut reader = BufReader::new(stdout).lines();
-        let mut lines = Vec::new();
-        while let Ok(Some(line)) = reader.next_line().await {
-            lines.push(line);
-        }
-        lines
-    };
-
-    let read_stderr = async move {
-        let mut reader = BufReader::new(stderr).lines();
-        let mut lines = Vec::new();
-        while let Ok(Some(line)) = reader.next_line().await {
-            lines.push(line);
-        }
-        lines
-    };
-
+    let mut all_output = Vec::new();
     let read_output = async {
-        let (stdout_lines, stderr_lines, status) =
-            tokio::join!(read_stdout, read_stderr, child.wait());
-        (stdout_lines, stderr_lines, status)
+        while let Ok(Some(line)) = reader.next_line().await {
+            all_output.push(line);
+        }
+        child.wait().await
     };
 
     let result = tokio::time::timeout(Duration::from_millis(timeout_ms), read_output).await;
 
     match result {
-        Ok((stdout_lines, stderr_lines, Ok(status))) => {
-            let mut combined = Vec::with_capacity(stdout_lines.len() + stderr_lines.len());
-            combined.extend(stdout_lines);
-            combined.extend(stderr_lines);
-            let output = combined.join("\n");
-
+        Ok(Ok(status)) => {
             if !status.success() {
                 return Err(anyhow::anyhow!(
-                    "opencode run failed with exit code: {:?}\n{}",
-                    status.code(),
-                    output
+                    "opencode run failed with exit code: {:?}",
+                    status.code()
                 ));
             }
-
-            let response = extract_response_text(&output);
+            let stdout = all_output.join("\n");
+            let response = extract_response_text(&stdout);
             if response.trim().is_empty() {
-                // Sometimes opencode prints non-JSON text despite `--format json`.
-                // In that case, fall back to the raw output so PASS/FAIL parsing can still work.
-                if output.trim().is_empty() {
-                    return Err(anyhow::anyhow!("opencode run returned empty response"));
-                }
-                return Ok(output);
+                return Err(anyhow::anyhow!("opencode run returned empty response"));
             }
-
             Ok(response)
         }
-        Ok((_stdout_lines, _stderr_lines, Err(e))) => {
-            Err(anyhow::anyhow!("opencode run failed: {}", e))
-        }
+        Ok(Err(e)) => Err(anyhow::anyhow!("opencode run failed: {}", e)),
         Err(_) => {
             let _ = child.kill().await;
             Err(anyhow::anyhow!("opencode run timed out"))
@@ -134,15 +101,7 @@ fn extract_response_text(json_events: &str) -> String {
             continue;
         }
 
-        let payload = trimmed
-            .strip_prefix("data:")
-            .map(str::trim)
-            .unwrap_or(trimmed);
-        if payload.is_empty() || payload == "[DONE]" {
-            continue;
-        }
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
             let text = collect_text_from_value(&json);
             if !text.is_empty() {
                 parts.push(text);
@@ -154,36 +113,36 @@ fn extract_response_text(json_events: &str) -> String {
 }
 
 fn collect_text_from_value(value: &serde_json::Value) -> String {
-    let mut parts = Vec::new();
+    let mut parts = vec![];
 
-    match value {
-        serde_json::Value::String(text) => {
-            parts.push(text.clone());
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                let text = collect_text_from_value(item);
-                if !text.is_empty() {
-                    parts.push(text);
-                }
+    if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
+        parts.push(text.to_string());
+    }
+
+    if let Some(text) = value
+        .get("part")
+        .and_then(|p| p.get("text"))
+        .and_then(|v| v.as_str())
+    {
+        parts.push(text.to_string());
+    }
+
+    if let Some(items) = value.get("parts").and_then(|v| v.as_array()) {
+        for item in items {
+            let text = collect_text_from_value(item);
+            if !text.is_empty() {
+                parts.push(text);
             }
         }
-        serde_json::Value::Object(map) => {
-            for (key, item) in map {
-                if key == "text" {
-                    if let Some(text) = item.as_str() {
-                        parts.push(text.to_string());
-                        continue;
-                    }
-                }
+    }
 
-                let text = collect_text_from_value(item);
-                if !text.is_empty() {
-                    parts.push(text);
-                }
+    if let Some(items) = value.get("data").and_then(|v| v.as_array()) {
+        for item in items {
+            let text = collect_text_from_value(item);
+            if !text.is_empty() {
+                parts.push(text);
             }
         }
-        _ => {}
     }
 
     parts.join("")
@@ -191,123 +150,45 @@ fn collect_text_from_value(value: &serde_json::Value) -> String {
 
 /// Parse review output for PASS/FAIL
 fn parse_review_output(output: &str) -> ReviewResult {
-    if let Some(parsed) = parse_review_json(output) {
-        return parsed;
-    }
+    let first_line = output.lines().next().unwrap_or("").trim();
 
-    let mut lines = output.lines();
-    let first_line = lines.next().unwrap_or("").trim();
-    let rest = lines.collect::<Vec<_>>().join("\n");
-    let rest_trimmed = rest.trim();
-    let rest_details = if rest_trimmed.is_empty() {
-        None
-    } else {
-        Some(rest_trimmed.to_string())
-    };
-    let full_trimmed = output.trim();
-    let full_details = if full_trimmed.is_empty() {
-        None
-    } else {
-        Some(full_trimmed.to_string())
-    };
-    let first_line_upper = first_line.to_ascii_uppercase();
-
-    if first_line_upper == "PASS" || first_line_upper.starts_with("PASS") {
+    if first_line == "PASS" {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
-            details: rest_details,
         };
     }
 
-    if first_line_upper.starts_with("FAIL:") {
-        let reason = first_line
-            .split_once(':')
-            .map(|(_, rest)| rest)
-            .unwrap_or("")
-            .trim();
+    if let Some(reason) = first_line.strip_prefix("FAIL:") {
         return ReviewResult {
             status: "fail".to_string(),
-            reason: Some(reason.to_string()),
-            details: rest_details,
+            reason: Some(reason.trim().to_string()),
         };
     }
-
-    let output_upper = output.to_ascii_uppercase();
 
     // Try to find PASS/FAIL anywhere
-    if output_upper.contains("PASS") {
+    if output.contains("PASS") {
         return ReviewResult {
             status: "pass".to_string(),
             reason: None,
-            details: full_details.clone(),
         };
     }
 
-    if let Some(start) = output_upper.find("FAIL:") {
-        let rest = &output[start + 5..];
-        let reason = rest.lines().next().unwrap_or("").trim();
-        return ReviewResult {
-            status: "fail".to_string(),
-            reason: Some(reason.to_string()),
-            details: full_details.clone(),
-        };
+    if output.contains("FAIL:") {
+        if let Some(start) = output.find("FAIL:") {
+            let rest = &output[start + 5..];
+            let reason = rest.lines().next().unwrap_or("").trim();
+            return ReviewResult {
+                status: "fail".to_string(),
+                reason: Some(reason.to_string()),
+            };
+        }
     }
 
     ReviewResult {
         status: "fail".to_string(),
         reason: Some("Could not parse review output".to_string()),
-        details: full_details,
     }
-}
-
-fn parse_review_json(output: &str) -> Option<ReviewResult> {
-    let mut candidates = Vec::new();
-    candidates.extend(
-        output
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty()),
-    );
-    candidates.push(output.trim());
-
-    for candidate in candidates {
-        if candidate.is_empty() {
-            continue;
-        }
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(candidate) else {
-            continue;
-        };
-        let Some(status_value) = json.get("status").and_then(|value| value.as_str()) else {
-            continue;
-        };
-        let status = status_value.trim().to_ascii_lowercase();
-        let details = json
-            .get("details")
-            .and_then(|value| value.as_str())
-            .or_else(|| json.get("output").and_then(|value| value.as_str()))
-            .map(|value| value.to_string());
-        if status == "pass" {
-            return Some(ReviewResult {
-                status: "pass".to_string(),
-                reason: None,
-                details,
-            });
-        }
-        if status == "fail" {
-            let reason = json
-                .get("reason")
-                .and_then(|value| value.as_str())
-                .or_else(|| json.get("message").and_then(|value| value.as_str()))
-                .unwrap_or("review failed");
-            return Some(ReviewResult {
-                status: "fail".to_string(),
-                reason: Some(reason.to_string()),
-                details,
-            });
-        }
-    }
-    None
 }
 
 /// Run a review using opencode's review agent.
@@ -336,21 +217,9 @@ pub async fn run_review(
     match result {
         Ok(response) => {
             let review = parse_review_output(&response);
-            ReviewStepResult::new(
-                "review",
-                &review.status,
-                review.reason,
-                review.details,
-                Some(duration_ms),
-            )
+            ReviewStepResult::new("review", &review.status, review.reason, Some(duration_ms))
         }
-        Err(e) => ReviewStepResult::new(
-            "review",
-            "fail",
-            Some(e.to_string()),
-            None,
-            Some(duration_ms),
-        ),
+        Err(e) => ReviewStepResult::new("review", "fail", Some(e.to_string()), Some(duration_ms)),
     }
 }
 
@@ -367,7 +236,6 @@ pub async fn review_command(worktree: &str, skip_tests: bool, timeout_ms: u64) -
         serde_json::json!({
             "status": result.status,
             "reason": result.tail,
-            "details": result.details,
         })
     );
 

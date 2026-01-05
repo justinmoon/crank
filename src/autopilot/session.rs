@@ -1,0 +1,121 @@
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+
+use crate::orchestrator::logging;
+use crate::task::git;
+
+pub struct SessionSpec {
+    pub concurrency: u16,
+    pub git_root: PathBuf,
+    pub session_name: String,
+    project: Option<String>,
+    worker_bin: PathBuf,
+    log_dir: PathBuf,
+}
+
+impl SessionSpec {
+    pub fn new(concurrency: u16, project: Option<String>) -> Result<Self> {
+        let project = project.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let git_root = git::git_root()?;
+        let session_name = match project.as_deref() {
+            Some(name) => format!("crank({name})"),
+            None => "crank".to_string(),
+        };
+        let worker_bin = std::env::current_exe().context("failed to locate crank binary")?;
+        let log_dir = logging::log_dir()?;
+
+        Ok(Self {
+            concurrency,
+            git_root,
+            session_name,
+            project,
+            worker_bin,
+            log_dir,
+        })
+    }
+
+    pub fn worker_name(&self, id: u16) -> String {
+        format!("worker-{id}")
+    }
+
+    pub fn worker_command(&self, id: u16) -> Vec<String> {
+        let mut args = vec![
+            self.worker_bin.to_string_lossy().to_string(),
+            "worker".to_string(),
+            "--id".to_string(),
+            id.to_string(),
+        ];
+        if let Some(project) = self.project.as_deref() {
+            args.push("--project".to_string());
+            args.push(project.to_string());
+        }
+        args
+    }
+
+    pub fn worker_command_string(&self, id: u16) -> String {
+        shell_join(&self.worker_command(id))
+    }
+
+    pub fn log_tail_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "tail".to_string(),
+            "-n".to_string(),
+            "200".to_string(),
+            "-F".to_string(),
+        ];
+        for id in 1..=self.concurrency {
+            args.push(
+                self.log_dir
+                    .join(format!("worker-{id}.log"))
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            args.push(
+                self.log_dir
+                    .join(format!("opencode-{id}.log"))
+                    .to_string_lossy()
+                    .to_string(),
+            );
+        }
+        args
+    }
+
+    pub fn log_tail_command(&self) -> String {
+        shell_join(&self.log_tail_args())
+    }
+}
+
+fn shell_join(args: &[String]) -> String {
+    let mut joined = String::new();
+    for (idx, arg) in args.iter().enumerate() {
+        if idx > 0 {
+            joined.push(' ');
+        }
+        joined.push_str(&shell_escape(arg));
+    }
+    joined
+}
+
+fn shell_escape(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let mut escaped = String::from("'");
+    for ch in value.chars() {
+        if ch == '\'' {
+            escaped.push_str("'\"'\"'");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}

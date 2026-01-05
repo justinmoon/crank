@@ -17,14 +17,12 @@ pub struct PendingMerge {
 }
 
 fn get_pending_dir() -> Result<PathBuf> {
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-    get_pending_dir_with_home(&home_dir)
-}
+    let crank_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
+        .join(".crank")
+        .join("pending");
 
-fn get_pending_dir_with_home(home_dir: &Path) -> Result<PathBuf> {
-    let crank_dir = crate::crank_io::user_crank_dir_from(home_dir).join("pending");
-    crate::crank_io::ensure_dir(&crank_dir)?;
+    std::fs::create_dir_all(&crank_dir)?;
     Ok(crank_dir)
 }
 
@@ -58,12 +56,10 @@ pub async fn create_pending(
     };
 
     let file_path = pending_dir.join(format!("{}.json", pending.id));
-    let content = serde_json::to_string_pretty(&pending)?;
-    crate::crank_io::write_string(&file_path, &content)?;
+    std::fs::write(&file_path, serde_json::to_string_pretty(&pending)?)?;
 
     Ok(pending)
 }
-
 
 /// Get a pending merge by ID or branch name
 pub async fn get_pending(id_or_branch: &str) -> Result<Option<PendingMerge>> {
@@ -74,7 +70,7 @@ pub async fn get_pending(id_or_branch: &str) -> Result<Option<PendingMerge>> {
         let path = entry.path();
 
         if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let content = crate::crank_io::read_to_string(&path)?;
+            let content = std::fs::read_to_string(&path)?;
             let pending: PendingMerge = serde_json::from_str(&content)?;
 
             if pending.id == id_or_branch || pending.branch == id_or_branch {
@@ -96,7 +92,7 @@ pub async fn list_pending() -> Result<Vec<PendingMerge>> {
         let path = entry.path();
 
         if path.extension().map(|e| e == "json").unwrap_or(false) {
-            let content = crate::crank_io::read_to_string(&path)?;
+            let content = std::fs::read_to_string(&path)?;
             if let Ok(p) = serde_json::from_str::<PendingMerge>(&content) {
                 pending.push(p);
             }
@@ -117,11 +113,11 @@ async fn update_status(id: &str, status: &str) -> Result<Option<PendingMerge>> {
         return Ok(None);
     }
 
-    let content = crate::crank_io::read_to_string(&file_path)?;
+    let content = std::fs::read_to_string(&file_path)?;
     let mut pending: PendingMerge = serde_json::from_str(&content)?;
     pending.status = status.to_string();
 
-    crate::crank_io::write_string(&file_path, &serde_json::to_string_pretty(&pending)?)?;
+    std::fs::write(&file_path, serde_json::to_string_pretty(&pending)?)?;
     Ok(Some(pending))
 }
 
@@ -146,7 +142,7 @@ async fn check_status(id: &str) -> Result<Option<String>> {
         return Ok(None);
     }
 
-    let content = crate::crank_io::read_to_string(&file_path)?;
+    let content = std::fs::read_to_string(&file_path)?;
     let pending: PendingMerge = serde_json::from_str(&content)?;
     Ok(Some(pending.status))
 }
@@ -156,7 +152,7 @@ pub async fn send_notification(title: &str, message: &str) -> Result<()> {
     let script = format!(
         "display notification \"{}\" with title \"{}\" sound name \"default\"",
         message.replace('"', "\\\""),
-        title.replace('"', "\\\""),
+        title.replace('"', "\\\"")
     );
 
     let _ = Command::new("osascript")
@@ -359,7 +355,7 @@ pub async fn pending_command() -> Result<()> {
         .collect();
 
     if actually_pending.is_empty() {
-        println!(r#"{"status":"ok","message":"No pending merges","pending":[]}"#);
+        println!(r#"{{"status":"ok","message":"No pending merges","pending":[]}}"#);
         return Ok(());
     }
 
@@ -386,21 +382,4 @@ pub async fn pending_command() -> Result<()> {
     );
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use tempfile::tempdir;
-
-    #[test]
-    fn pending_dir_is_created_under_home_crank_dir() {
-        let dir = tempdir().unwrap();
-        let home = dir.path();
-
-        let pending = get_pending_dir_with_home(home).unwrap();
-        assert_eq!(pending, home.join(".crank").join("pending"));
-        assert!(pending.exists());
-    }
 }

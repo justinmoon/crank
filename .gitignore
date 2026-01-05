@@ -1,6 +1,5 @@
 # Rust build artifacts
 /target/
-/apps/crank-alert-badge/.build/
 
 # Nix/direnv
 .direnv/

@@ -15,13 +15,9 @@ pub struct RunArgs {
     #[arg(value_name = "task-id")]
     pub task_id: Option<String>,
 
-    /// Force workflow scope (default: loop until waiting or complete)
+    /// Force workflow scope
     #[arg(long, conflicts_with = "task_id")]
     pub workflow: Option<String>,
-
-    /// Run only a single workflow step (no loop)
-    #[arg(long, requires = "workflow")]
-    pub once: bool,
 }
 
 pub fn run_command(args: RunArgs) -> Result<()> {
@@ -40,22 +36,18 @@ pub fn run_command(args: RunArgs) -> Result<()> {
     }
 
     if let Some(workflow_id) = args.workflow {
-        if args.once {
-            let current = current_task_for_workflow(&git_root, &tasks, &workflow_id);
-            return match run_next_workflow_step(&git_root, &tasks, &workflow_id, current.as_ref())?
-            {
-                WorkflowRunResult::Ran => Ok(()),
-                WorkflowRunResult::Waiting(message) => {
-                    println!("{message}");
-                    Ok(())
-                }
-                WorkflowRunResult::Complete => {
-                    println!("Workflow '{workflow_id}' complete");
-                    Ok(())
-                }
-            };
-        }
-        return run_workflow_loop(&git_root, &workflow_id);
+        let current = current_task_for_workflow(&git_root, &tasks, &workflow_id);
+        return match run_next_workflow_step(&git_root, &tasks, &workflow_id, current.as_ref())? {
+            WorkflowRunResult::Ran => Ok(()),
+            WorkflowRunResult::Waiting(message) => {
+                println!("{message}");
+                Ok(())
+            }
+            WorkflowRunResult::Complete => {
+                println!("Workflow '{workflow_id}' complete");
+                Ok(())
+            }
+        };
     }
 
     if let Some(current_id) = read_current_task_id(&git_root) {
@@ -118,40 +110,6 @@ enum WorkflowRunResult {
     Ran,
     Waiting(String),
     Complete,
-}
-
-fn run_workflow_loop(git_root: &Path, workflow_id: &str) -> Result<()> {
-    loop {
-        let tasks = store::load_tasks(git_root)?;
-        let current = current_task_for_workflow(git_root, &tasks, workflow_id);
-        match run_next_workflow_step(git_root, &tasks, workflow_id, current.as_ref())? {
-            WorkflowRunResult::Ran => {
-                if let Some(current_id) = read_current_task_id(git_root) {
-                    let refreshed = store::load_tasks(git_root)?;
-                    if let Some(task) = refreshed
-                        .iter()
-                        .find(|task| task::ids_match(&task.id, &current_id))
-                    {
-                        if !task.is_closed() {
-                            println!(
-                                "Workflow '{workflow_id}' paused on step '{}' (status {})",
-                                task.id, task.status
-                            );
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-            WorkflowRunResult::Waiting(message) => {
-                println!("{message}");
-                return Ok(());
-            }
-            WorkflowRunResult::Complete => {
-                println!("Workflow '{workflow_id}' complete");
-                return Ok(());
-            }
-        }
-    }
 }
 
 fn run_next_workflow_step(
@@ -257,7 +215,6 @@ fn current_task_for_workflow(git_root: &Path, tasks: &[Task], workflow_id: &str)
         .find(|task| {
             task.workflow.as_deref() == Some(workflow_id) && task::ids_match(&task.id, &current_id)
         })
-        .filter(|task| !task.is_closed())
         .cloned()
 }
 
@@ -330,8 +287,8 @@ fn run_agent_step(git_root: &Path, task: &Task) -> Result<()> {
 }
 
 fn read_current_task_id(git_root: &Path) -> Option<String> {
-    let path = crate::crank_io::repo_crank_dir(git_root).join(".current");
-    let content = crate::crank_io::read_to_string(&path).ok()?;
+    let path = git_root.join(".crank").join(".current");
+    let content = std::fs::read_to_string(&path).ok()?;
     task::parse_current_task_id(&content)
 }
 
