@@ -38,42 +38,40 @@
 
             cargoArtifacts = craneLib.buildDepsOnly commonArgs;
             crank = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
-            crankAlertBadge =
-              if pkgs.stdenv.isDarwin then
-                let
-                  xcodeBaseDir = "/Applications/Xcode-26.2.0.app";
-                  xcodeWrapper = pkgs.xcodeenv.composeXcodeWrapper {
-                    xcodeBaseDir = xcodeBaseDir;
-                  };
-                in
-                pkgs.stdenvNoCC.mkDerivation {
-                  pname = "crank-alert-badge";
-                  version = "0.1.0";
-                  src = ./apps/crank-alert-badge;
-                  nativeBuildInputs = [ xcodeWrapper ];
-                  __noChroot = true;
+            mkCrankAlertBadge = { xcodeBaseDir ? "/Applications/Xcode.app" }:
+              let
+                xcodeWrapper = pkgs.xcodeenv.composeXcodeWrapper {
+                  inherit xcodeBaseDir;
+                };
+              in
+              pkgs.stdenvNoCC.mkDerivation {
+                pname = "crank-alert-badge";
+                version = "0.1.0";
+                src = ./apps/crank-alert-badge;
+                nativeBuildInputs = [ xcodeWrapper ];
+                __noChroot = true;
 
-                  buildPhase = ''
-                    export HOME="$TMPDIR"
-                    export DEVELOPER_DIR="${xcodeBaseDir}/Contents/Developer"
-                    export MACOSX_DEPLOYMENT_TARGET=13.0
-                    ${xcodeWrapper}/bin/xcrun --sdk macosx swiftc \
-                      -O \
-                      -framework AppKit \
-                      -o CrankAlertBadge \
-                      Sources/main.swift
-                  '';
+                buildPhase = ''
+                  export HOME="$TMPDIR"
+                  export DEVELOPER_DIR="${xcodeBaseDir}/Contents/Developer"
+                  export MACOSX_DEPLOYMENT_TARGET=13.0
+                  ${xcodeWrapper}/bin/xcrun --sdk macosx swiftc \
+                    -O \
+                    -framework AppKit \
+                    -o CrankAlertBadge \
+                    Sources/main.swift
+                '';
 
-                  installPhase = ''
-                    app="$out/Applications/CrankAlertBadge.app"
-                    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-                    cp CrankAlertBadge "$app/Contents/MacOS/"
+                installPhase = ''
+                  app="$out/Applications/CrankAlertBadge.app"
+                  mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+                  cp CrankAlertBadge "$app/Contents/MacOS/"
 
-                    if [ -f AppIcon.icns ]; then
-                      cp AppIcon.icns "$app/Contents/Resources/"
-                    fi
+                  if [ -f AppIcon.icns ]; then
+                    cp AppIcon.icns "$app/Contents/Resources/"
+                  fi
 
-                    cat > "$app/Contents/Info.plist" << 'EOF'
+                  cat > "$app/Contents/Info.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -102,18 +100,21 @@
 </plist>
 EOF
 
-                    ${xcodeWrapper}/bin/codesign --force --deep --sign - "$app"
-                  '';
+                  ${xcodeWrapper}/bin/codesign --force --deep --sign - "$app"
+                '';
 
-                  meta = with pkgs.lib; {
-                    description = "Crank alert badge menu bar app";
-                    platforms = platforms.darwin;
-                  };
-                }
-              else
-                null;
+                meta = with pkgs.lib; {
+                  description = "Crank alert badge menu bar app";
+                  platforms = platforms.darwin;
+                  hydraPlatforms = [];
+                };
+              };
+            crankAlertBadge =
+              if pkgs.stdenv.isDarwin then mkCrankAlertBadge { } else null;
           in
-          f { inherit pkgs system rustToolchain craneLib crank crankAlertBadge; }
+          f {
+            inherit pkgs system rustToolchain craneLib crank crankAlertBadge mkCrankAlertBadge;
+          }
         );
     in
     {
@@ -123,6 +124,10 @@ EOF
       } // (pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin {
         crank-alert-badge = crankAlertBadge;
       }));
+
+      lib = forAllSystems ({ mkCrankAlertBadge, ... }: {
+        mkCrankAlertBadge = mkCrankAlertBadge;
+      });
 
       devShells = forAllSystems ({ pkgs, rustToolchain, ... }: {
         default = pkgs.mkShell {
