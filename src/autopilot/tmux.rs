@@ -1,3 +1,4 @@
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
@@ -74,9 +75,11 @@ pub fn run_tmux(concurrency: u16, project: Option<String>) -> Result<()> {
         return Err(anyhow!("failed to create tmux logs window"));
     }
 
-    println!("Created tmux session: {}", spec.session_name);
-    println!("Attach with: tmux attach -t {}", spec.session_name);
-    Ok(())
+    // Attach to the session (replaces current process)
+    let err = Command::new("tmux")
+        .args(["attach", "-t", &spec.session_name])
+        .exec();
+    Err(anyhow!("failed to attach to tmux session: {}", err))
 }
 
 fn session_exists(name: &str) -> Result<bool> {
