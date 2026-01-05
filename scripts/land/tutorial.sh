@@ -38,9 +38,9 @@ else
   target=$(main_worktree "$worktree")
 fi
 
-merge_commit=$(cd "$target" && git rev-parse "$base" 2>/dev/null || true)
-if [[ -z "$merge_commit" ]]; then
-  echo "tutorial: could not resolve merge commit; skipping"
+land_commit=$(cd "$target" && git rev-parse "$base" 2>/dev/null || true)
+if [[ -z "$land_commit" ]]; then
+  echo "tutorial: could not resolve commit; skipping"
   exit 0
 fi
 
@@ -54,7 +54,7 @@ if [[ $install_status -ne 0 ]]; then
 fi
 
 set +e
-crank tutorial generate --replace --worktree "$worktree" --base "$base" --merge-commit "$merge_commit"
+crank tutorial generate --replace --worktree "$worktree" --base "$base" --merge-commit "$land_commit"
 status=$?
 set -e
 

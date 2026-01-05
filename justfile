@@ -36,12 +36,12 @@ lint: nix-check
 
 # Run E2E tests (requires release build)
 test-e2e: nix-check build
-    ./tests/e2e/test-merge.sh
+    ./tests/e2e/test-land.sh
     ./tests/e2e/test-workflow.sh
 
-# Pre-merge checks
+# Pre-merge checks (run before landing)
 pre-merge: check lint test build test-e2e
-    @echo "All checks passed!"
+    @echo "All pre-merge checks passed!"
 
 # Install to ~/.cargo/bin
 install: nix-check

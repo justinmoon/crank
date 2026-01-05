@@ -1,6 +1,6 @@
 #!/bin/bash
-# E2E tests for crank merge workflow templates
-# Tests the core merge workflow without OpenCode or project-specific CI
+# E2E tests for crank land workflow templates
+# Tests the core land workflow without OpenCode or project-specific CI
 set -euo pipefail
 
 # Colors for output
@@ -47,7 +47,7 @@ fail() {
     ((TESTS_FAILED++)) || true
 }
 
-build_merge_workflow() {
+build_land_workflow() {
     local workflow_id="$1"
     local worktree="$2"
     local target_repo="$3"
@@ -75,7 +75,7 @@ build_merge_workflow() {
         vars+=(--var "target_repo_flag=")
     fi
 
-    "$CRANK_BIN" build merge --id "$workflow_id" --ephemeral "${vars[@]}"
+    "$CRANK_BIN" build land --id "$workflow_id" --ephemeral "${vars[@]}"
 }
 
 run_workflow_until_done() {
@@ -128,11 +128,11 @@ setup_repos() {
     git fetch origin >/dev/null 2>&1
 
     mkdir -p "$TMPDIR/worktree/.crank/workflows"
-    cp "$PROJECT_ROOT/.crank/workflows/merge.workflow.toml" "$TMPDIR/worktree/.crank/workflows/merge.workflow.toml"
+    cp "$PROJECT_ROOT/.crank/workflows/land.workflow.toml" "$TMPDIR/worktree/.crank/workflows/land.workflow.toml"
 
     mkdir -p "$TMPDIR/worktree/scripts"
-    cp -R "$PROJECT_ROOT/scripts/merge" "$TMPDIR/worktree/scripts/merge"
-    chmod +x "$TMPDIR/worktree/scripts/merge/"*.sh
+    cp -R "$PROJECT_ROOT/scripts/land" "$TMPDIR/worktree/scripts/land"
+    chmod +x "$TMPDIR/worktree/scripts/land/"*.sh
 
     echo ".crank/workflows/" >> "$TMPDIR/worktree/.git/info/exclude"
     echo "scripts/" >> "$TMPDIR/worktree/.git/info/exclude"
@@ -142,37 +142,37 @@ setup_repos() {
 }
 
 # ============================================================================
-# Test 1: Happy path merge
+# Test 1: Happy path land
 # ============================================================================
-test_happy_path_merge() {
+test_happy_path_land() {
     ((TESTS_RUN++)) || true
-    echo -e "${YELLOW}Test 1: Happy path merge${NC}"
-    
+    echo -e "${YELLOW}Test 1: Happy path land${NC}"
+
     cd "$TMPDIR/worktree"
-    
+
     # Create feature branch with change
     git checkout -b feature-add-line >/dev/null 2>&1
     echo "new feature line" >> file.txt
     git commit -am "add feature line" >/dev/null 2>&1
-    
-    local workflow_id="merge-happy"
-    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+
+    local workflow_id="land-happy"
+    if ! build_land_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
         fail "build failed"
         return
     fi
 
     if run_workflow_until_done "$workflow_id"; then
         cd "$TMPDIR/origin"
-        if git log --oneline master | grep -q "Merge feature-add-line"; then
-            pass "Branch merged and pushed to origin/master"
+        if git log --oneline master | grep -q "Land feature-add-line"; then
+            pass "Branch landed and pushed to origin/master"
         else
-            fail "Merge commit not found on origin/master"
+            fail "Land commit not found on origin/master"
             echo "  Origin log: $(git log --oneline -3 master)"
         fi
     else
-        fail "merge workflow failed"
+        fail "land workflow failed"
     fi
-    
+
     # Cleanup: go back to master
     cd "$TMPDIR/worktree"
     git checkout master >/dev/null 2>&1
@@ -194,8 +194,8 @@ test_preflight_requires_commit() {
 
     local output
     local exit_code=0
-    local workflow_id="merge-preflight-1"
-    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+    local workflow_id="land-preflight-1"
+    if ! build_land_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
         fail "build failed"
         return
     fi
@@ -211,8 +211,8 @@ test_preflight_requires_commit() {
     done
 
     if [[ $exit_code -ne 0 ]] \
-        && echo "$output" | grep -q "no commits to merge"; then
-        pass "Preflight blocks merges with no commits"
+        && echo "$output" | grep -q "no commits to land"; then
+        pass "Preflight blocks lands with no commits"
     else
         fail "Expected preflight failure for missing commits"
         echo "  Exit code: $exit_code"
@@ -223,8 +223,8 @@ test_preflight_requires_commit() {
     echo "dirty change" >> file.txt
 
     exit_code=0
-    workflow_id="merge-preflight-2"
-    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+    workflow_id="land-preflight-2"
+    if ! build_land_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
         fail "build failed"
         return
     fi
@@ -241,7 +241,7 @@ test_preflight_requires_commit() {
 
     if [[ $exit_code -ne 0 ]] \
         && echo "$output" | grep -q "uncommitted changes"; then
-        pass "Preflight blocks merges with dirty worktree"
+        pass "Preflight blocks lands with dirty worktree"
     else
         fail "Expected preflight failure for dirty worktree"
         echo "  Exit code: $exit_code"
@@ -259,18 +259,18 @@ test_preflight_requires_commit() {
 test_conflict_detection() {
     ((TESTS_RUN++)) || true
     echo -e "${YELLOW}Test 3: Conflict detection${NC}"
-    
+
     # First, sync worktree to current origin/master
     cd "$TMPDIR/worktree"
     git checkout master >/dev/null 2>&1
     git fetch origin >/dev/null 2>&1
     git reset --hard origin/master >/dev/null 2>&1
-    
+
     # Create a feature branch FROM current master with a change to line 1
     git checkout -b feature-conflict >/dev/null 2>&1
     echo "feature wants this content" > file.txt
     git commit -am "feature: change file content" >/dev/null 2>&1
-    
+
     # Now push a DIFFERENT change to master via target repo
     # This creates the conflict: master and feature both modify file.txt differently
     cd "$TMPDIR/target"
@@ -280,15 +280,15 @@ test_conflict_detection() {
     echo "master wants different content" > file.txt
     git commit -am "master: different change to file" >/dev/null 2>&1
     git push origin master >/dev/null 2>&1
-    
-    # Now try to merge feature-conflict - should detect conflict
+
+    # Now try to land feature-conflict - should detect conflict
     # because both branches modified file.txt differently
     cd "$TMPDIR/worktree"
-    
+
     local output
     local exit_code=0
-    local workflow_id="merge-conflict"
-    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
+    local workflow_id="land-conflict"
+    if ! build_land_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "" "--skip" "--skip"; then
         fail "build failed"
         return
     fi
@@ -302,16 +302,16 @@ test_conflict_detection() {
             break
         fi
     done
-    
+
     # Should fail with conflict status
-    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qi "merge conflict"; then
+    if [[ $exit_code -ne 0 ]] && echo "$output" | grep -qi "conflict"; then
         pass "Conflict correctly detected and reported"
     else
         fail "Expected conflict error with non-zero exit"
         echo "  Exit code: $exit_code"
         echo "  Output: $output"
     fi
-    
+
     # Cleanup
     cd "$TMPDIR/worktree"
     git checkout master >/dev/null 2>&1
@@ -319,19 +319,19 @@ test_conflict_detection() {
 }
 
 # ============================================================================
-# Test 4: Dry run doesn't merge
+# Test 4: Dry run doesn't land
 # ============================================================================
 test_dry_run() {
     ((TESTS_RUN++)) || true
-    echo -e "${YELLOW}Test 4: Dry run doesn't actually merge${NC}"
-    
+    echo -e "${YELLOW}Test 4: Dry run doesn't actually land${NC}"
+
     cd "$TMPDIR/worktree"
-    
+
     # Get current origin/master commit
     cd "$TMPDIR/origin"
     local before_commit
     before_commit=$(git rev-parse master)
-    
+
     # Create new feature branch in worktree
     cd "$TMPDIR/worktree"
     git fetch origin >/dev/null 2>&1
@@ -340,9 +340,9 @@ test_dry_run() {
     git checkout -b feature-dry-run >/dev/null 2>&1
     echo "dry run test" >> file.txt
     git commit -am "dry run feature" >/dev/null 2>&1
-    
-    local workflow_id="merge-dry-run"
-    if ! build_merge_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "--dry-run" "--skip" "--skip"; then
+
+    local workflow_id="land-dry-run"
+    if ! build_land_workflow "$workflow_id" "$TMPDIR/worktree" "$TMPDIR/target" "--dry-run" "--skip" "--skip"; then
         fail "build failed"
         return
     fi
@@ -364,7 +364,7 @@ test_dry_run() {
         fail "dry run workflow failed"
         echo "  Output: $output"
     fi
-    
+
     # Cleanup
     cd "$TMPDIR/worktree"
     git checkout master >/dev/null 2>&1
@@ -381,8 +381,8 @@ main() {
     echo ""
     
     setup_repos
-    
-    test_happy_path_merge
+
+    test_happy_path_land
     test_preflight_requires_commit
     test_conflict_detection
     test_dry_run
