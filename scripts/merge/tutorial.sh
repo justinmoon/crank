@@ -45,6 +45,15 @@ if [[ -z "$merge_commit" ]]; then
 fi
 
 set +e
+cargo install --path "$target" --bin crank --force
+install_status=$?
+set -e
+
+if [[ $install_status -ne 0 ]]; then
+  echo "tutorial: cargo install failed (ignored)"
+fi
+
+set +e
 crank tutorial generate --replace --worktree "$worktree" --base "$base" --merge-commit "$merge_commit"
 status=$?
 set -e

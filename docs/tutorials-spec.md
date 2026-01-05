@@ -149,6 +149,7 @@ Support opening source files at the merge commit:
 
 Add a post-merge step (after `merge`) once implemented:
 - `tutorial` step runs `scripts/merge/tutorial.sh`.
+- Script installs the latest `crank` binary from the merged worktree before generating.
 - Script calls `crank tutorial generate` using:
   - `--worktree` (merge workflow var)
   - `--base`
