@@ -435,7 +435,8 @@ fn spawn_codex(
 ) -> Result<Child> {
     let notify_script = codex_notify_script(worktree_path)?;
     let mut cmd = Command::new("codex");
-    cmd.arg("--cd")
+    cmd.arg("--yolo")
+        .arg("--cd")
         .arg(worktree_path)
         .arg(prompt)
         .env("CODEX_NOTIFY", &notify_script)
@@ -456,10 +457,9 @@ fn spawn_claude(
 ) -> Result<Child> {
     let plugin_dir = claude_plugin_dir(worktree_path)?;
     let mut cmd = Command::new("claude");
-    cmd.arg("--plugin-dir")
+    cmd.arg("--dangerously-skip-permissions")
+        .arg("--plugin-dir")
         .arg(plugin_dir)
-        .arg("--permission-mode")
-        .arg("bypassPermissions")
         .arg(prompt)
         .env("CRANK_TASK_ID", &task.id)
         .env("CRANK_SUPERVISION", mode.as_str())
