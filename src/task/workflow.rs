@@ -16,7 +16,7 @@ use crate::task::model::SupervisionMode;
 use crate::task::model::{
     normalize_task_id, sort_tasks, Task, TASK_STATUS_CLOSED, TASK_STATUS_IN_PROGRESS,
 };
-use crate::task::prompts::{self, BranchMethod};
+use crate::task::prompts::{self, BranchMethod, CodingAgent};
 use crate::task::store;
 use crate::task::tui;
 
@@ -92,7 +92,12 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
     store::update_task_status(&selected.path, TASK_STATUS_IN_PROGRESS)
         .context("failed to mark task in progress")?;
 
-    let model = prompts::prompt_model()?;
+    let coding_agent = prompts::prompt_coding_agent()?;
+    let model = if matches!(coding_agent, CodingAgent::Opencode) {
+        Some(prompts::prompt_model()?)
+    } else {
+        None
+    };
     let branch_method = prompts::prompt_branch_method()?;
 
     let branch = match branch_method {
@@ -139,13 +144,20 @@ pub fn run_next(no_worktree: bool, select: Option<String>) -> Result<()> {
 
     let rel_issue_path = format!(".crank/{}.md", selected.id);
 
-    run_tmux_flow(&branch, &worktree_path, &model, &rel_issue_path)
+    run_tmux_flow(
+        &branch,
+        &worktree_path,
+        coding_agent,
+        model.as_deref(),
+        &rel_issue_path,
+    )
 }
 
 fn run_tmux_flow(
     branch: &str,
     worktree_path: &Path,
-    model: &str,
+    coding_agent: CodingAgent,
+    model: Option<&str>,
     rel_issue_path: &str,
 ) -> Result<()> {
     let status = Command::new("tmux")
@@ -172,17 +184,33 @@ fn run_tmux_flow(
     let prompt = format!(
         "Read {rel_issue_path} and implement it. Ask clarifying questions first if needed."
     );
+
+    let (cmd, agent_name) = match coding_agent {
+        CodingAgent::Opencode => {
+            let model = model.expect("model required for opencode");
+            (
+                format!("opencode --model '{model}' --prompt '{prompt}'"),
+                "opencode",
+            )
+        }
+        CodingAgent::Claude => (
+            format!("claude --dangerously-skip-permissions '{prompt}'"),
+            "claude",
+        ),
+        CodingAgent::Codex => (format!("codex --yolo '{prompt}'"), "codex"),
+    };
+
     let status = Command::new("tmux")
         .args(["send-keys", "-t", branch])
-        .arg(format!("opencode --model '{model}' --prompt '{prompt}'"))
+        .arg(&cmd)
         .arg("Enter")
         .status()
-        .context("failed to launch opencode")?;
+        .context(format!("failed to launch {agent_name}"))?;
     if !status.success() {
-        return Err(anyhow!("failed to launch opencode"));
+        return Err(anyhow!("failed to launch {agent_name}"));
     }
 
-    println!("Launched opencode in tmux window '{branch}'");
+    println!("Launched {agent_name} in tmux window '{branch}'");
     Ok(())
 }
 

@@ -9,6 +9,13 @@ pub enum BranchMethod {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum CodingAgent {
+    Opencode,
+    Claude,
+    Codex,
+}
+
 pub fn prompt_task_fields(
     title: Option<String>,
     priority: Option<i32>,
@@ -122,4 +129,18 @@ pub fn prompt_branch_name() -> Result<String> {
         return Err(anyhow!("branch name is required"));
     }
     Ok(trimmed.to_string())
+}
+
+pub fn prompt_coding_agent() -> Result<CodingAgent> {
+    let options = ["Opencode", "Claude Code", "Codex"];
+    let selection = Select::new()
+        .with_prompt("Select coding agent")
+        .items(&options)
+        .default(0)
+        .interact()?;
+    Ok(match selection {
+        0 => CodingAgent::Opencode,
+        1 => CodingAgent::Claude,
+        _ => CodingAgent::Codex,
+    })
 }
