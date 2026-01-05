@@ -33,11 +33,11 @@ enum Commands {
         concurrency: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
+        #[arg(long, short, value_enum)]
         mode: SupervisionMode,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
@@ -48,26 +48,26 @@ enum Commands {
         concurrency: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
+        #[arg(long, short, value_enum)]
         mode: SupervisionMode,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
     /// Run a tmux worker (internal)
     Worker {
         /// Worker ID (1-based)
-        #[arg(long)]
+        #[arg(long, short)]
         id: u16,
 
         /// Worker mode (supervised or unsupervised)
-        #[arg(long, value_enum)]
+        #[arg(long, short, value_enum)]
         mode: SupervisionMode,
 
         /// Filter tasks by project/app name
-        #[arg(long)]
+        #[arg(long, short)]
         project: Option<String>,
     },
 
