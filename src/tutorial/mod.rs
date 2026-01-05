@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::crank_io;
 use crate::task::store;
 
-pub mod inbox;
 pub mod cli;
+pub mod inbox;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TutorialIndexEntry {
@@ -106,7 +106,10 @@ pub fn generate_tutorial(options: &TutorialGenerateOptions) -> Result<String> {
     if tutorial_dir.exists() {
         if options.replace {
             fs::remove_dir_all(&tutorial_dir).with_context(|| {
-                format!("failed to remove existing tutorial: {}", tutorial_dir.display())
+                format!(
+                    "failed to remove existing tutorial: {}",
+                    tutorial_dir.display()
+                )
             })?;
         } else {
             return Err(anyhow!(
@@ -131,9 +134,14 @@ pub fn generate_tutorial(options: &TutorialGenerateOptions) -> Result<String> {
         let commits = load_commits(&repo_root, &range)?;
 
         let diff_hunks = build_diff_hunks(&repo_root, &range)?;
-        let step_plans =
-            plan_steps(&repo_root, &diff_hunks, &issue_content, &base, &merge_commit)
-                .unwrap_or_else(|_| fallback_steps(&diff_hunks));
+        let step_plans = plan_steps(
+            &repo_root,
+            &diff_hunks,
+            &issue_content,
+            &base,
+            &merge_commit,
+        )
+        .unwrap_or_else(|_| fallback_steps(&diff_hunks));
 
         let summary = match build_summary_with_llm(
             &repo_root,
@@ -219,12 +227,7 @@ pub fn generate_tutorial(options: &TutorialGenerateOptions) -> Result<String> {
     result
 }
 
-pub fn show_tutorial(
-    repo_root: &Path,
-    id: &str,
-    format: &str,
-    step: Option<usize>,
-) -> Result<()> {
+pub fn show_tutorial(repo_root: &Path, id: &str, format: &str, step: Option<usize>) -> Result<()> {
     let full = load_full_tutorial(repo_root, id)?;
     match format {
         "json" => {
@@ -384,7 +387,10 @@ fn resolve_commit_range(
     merge_commit: &str,
     base: &str,
 ) -> Result<(String, String)> {
-    let parents = git_output(repo_root, &["rev-list", "--parents", "-n", "1", merge_commit])?;
+    let parents = git_output(
+        repo_root,
+        &["rev-list", "--parents", "-n", "1", merge_commit],
+    )?;
     let parts: Vec<&str> = parents.split_whitespace().collect();
     if parts.len() >= 3 {
         return Ok((parts[1].to_string(), parts[2].to_string()));
@@ -538,10 +544,7 @@ fn build_summary_fallback(
             lines.push(format!("- Changes: {}", subjects.join("; ")));
         } else {
             let head = subjects[..5].join("; ");
-            lines.push(format!(
-                "- Changes: {head}; (+{} more)",
-                subjects.len() - 5
-            ));
+            lines.push(format!("- Changes: {head}; (+{} more)", subjects.len() - 5));
         }
     }
 
@@ -597,11 +600,7 @@ struct AltPlanSection {
 fn build_diff_hunks(repo_root: &Path, range: &(String, String)) -> Result<Vec<DiffHunk>> {
     let diff = git_output(
         repo_root,
-        &[
-            "diff",
-            "--no-color",
-            &format!("{}..{}", range.0, range.1),
-        ],
+        &["diff", "--no-color", &format!("{}..{}", range.0, range.1)],
     )?;
 
     if diff.trim().is_empty() {
@@ -617,11 +616,11 @@ fn build_diff_hunks(repo_root: &Path, range: &(String, String)) -> Result<Vec<Di
     let mut index = 1;
 
     let flush_hunk = |hunks: &mut Vec<DiffHunk>,
-                          file_header: &[String],
-                          current_file: &str,
-                          current_header: &str,
-                          current_hunk: &mut Vec<String>,
-                          index: &mut usize| {
+                      file_header: &[String],
+                      current_file: &str,
+                      current_header: &str,
+                      current_hunk: &mut Vec<String>,
+                      index: &mut usize| {
         if current_hunk.is_empty() {
             return;
         }
@@ -648,9 +647,9 @@ fn build_diff_hunks(repo_root: &Path, range: &(String, String)) -> Result<Vec<Di
     };
 
     let flush_file_without_hunks = |hunks: &mut Vec<DiffHunk>,
-                                        file_header: &[String],
-                                        current_file: &str,
-                                        index: &mut usize| {
+                                    file_header: &[String],
+                                    current_file: &str,
+                                    index: &mut usize| {
         if file_header.is_empty() || current_file.is_empty() {
             return;
         }
@@ -660,7 +659,12 @@ fn build_diff_hunks(repo_root: &Path, range: &(String, String)) -> Result<Vec<Di
             file: current_file.to_string(),
             header: "file change".to_string(),
             content,
-            sample: file_header.iter().take(6).cloned().collect::<Vec<_>>().join("\n"),
+            sample: file_header
+                .iter()
+                .take(6)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n"),
         });
         *index += 1;
     };
@@ -790,8 +794,8 @@ Return JSON only matching:\n\
     let mut planned: StepPlanResponse = match serde_json::from_str(&cleaned) {
         Ok(parsed) => parsed,
         Err(_) => {
-            let alt: AltPlanResponse = serde_json::from_str(&cleaned)
-                .with_context(|| "failed to parse step plan JSON")?;
+            let alt: AltPlanResponse =
+                serde_json::from_str(&cleaned).with_context(|| "failed to parse step plan JSON")?;
             StepPlanResponse {
                 steps: alt
                     .sections
@@ -827,7 +831,8 @@ Return JSON only matching:\n\
 }
 
 fn fallback_steps(hunks: &[DiffHunk]) -> Vec<StepPlan> {
-    let mut by_file: std::collections::BTreeMap<&str, Vec<String>> = std::collections::BTreeMap::new();
+    let mut by_file: std::collections::BTreeMap<&str, Vec<String>> =
+        std::collections::BTreeMap::new();
     for hunk in hunks {
         by_file
             .entry(hunk.file.as_str())
@@ -877,10 +882,7 @@ fn parse_issue_ids(content: &str) -> Vec<String> {
 
 fn load_issue_content(worktree: &Path, repo_root: &Path, ids: &[String]) -> (String, String) {
     if ids.is_empty() {
-        return (
-            String::new(),
-            "# Issue\n\n(No issue linked.)\n".to_string(),
-        );
+        return (String::new(), "# Issue\n\n(No issue linked.)\n".to_string());
     }
 
     let mut title = None;
@@ -1123,8 +1125,8 @@ fn canonicalize_dir(path: &Path) -> Result<PathBuf> {
     } else {
         path.to_path_buf()
     };
-    let resolved = fs::canonicalize(&path)
-        .with_context(|| format!("failed to resolve {}", path.display()))?;
+    let resolved =
+        fs::canonicalize(&path).with_context(|| format!("failed to resolve {}", path.display()))?;
     Ok(resolved)
 }
 

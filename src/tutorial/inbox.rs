@@ -79,8 +79,8 @@ impl InboxState {
         for (idx, entry) in self.entries.iter().enumerate() {
             if !self.filter_query.trim().is_empty() {
                 let query = self.filter_query.to_lowercase();
-                let haystack = format!("{} {} {}", entry.title, entry.id, entry.source_branch)
-                    .to_lowercase();
+                let haystack =
+                    format!("{} {} {}", entry.title, entry.id, entry.source_branch).to_lowercase();
                 if !haystack.contains(&query) {
                     continue;
                 }
@@ -108,8 +108,7 @@ impl InboxState {
     }
 
     fn selected_entry(&self) -> Option<&TutorialIndexEntry> {
-        self.selected_index()
-            .and_then(|idx| self.entries.get(idx))
+        self.selected_index().and_then(|idx| self.entries.get(idx))
     }
 
     fn move_selection(&mut self, delta: i32) {
@@ -430,15 +429,15 @@ fn render_footer(state: &InboxState, _area: Rect) -> Paragraph<'static> {
         .wrap(Wrap { trim: true })
 }
 
-fn load_summary_cached(
-    state: &mut InboxState,
-    repo_root: &Path,
-    id: &str,
-) -> String {
+fn load_summary_cached(state: &mut InboxState, repo_root: &Path, id: &str) -> String {
     if let Some(summary) = state.summary_cache.get(id) {
         return summary.clone();
     }
-    let summary_path = repo_root.join(".crank").join("tutorials").join(id).join("summary.md");
+    let summary_path = repo_root
+        .join(".crank")
+        .join("tutorials")
+        .join(id)
+        .join("summary.md");
     let summary = crate::crank_io::read_to_string(&summary_path).unwrap_or_default();
     state.summary_cache.insert(id.to_string(), summary.clone());
     summary
@@ -890,7 +889,8 @@ fn render_viewer_body(
                 }
             }
 
-            let explanation = render_step_explanation(state, layout, state.focus == ViewerFocus::Viewer);
+            let explanation =
+                render_step_explanation(state, layout, state.focus == ViewerFocus::Viewer);
             frame.render_widget(explanation, layout.body);
 
             if let Some(editor_rect) = layout.editor {
@@ -915,7 +915,10 @@ fn render_issue_summary(
             "Issue:",
             Style::default().add_modifier(Modifier::BOLD),
         )));
-        lines.extend(limit_lines(&issue_text, layout.body.height.saturating_sub(1) as usize));
+        lines.extend(limit_lines(
+            &issue_text,
+            layout.body.height.saturating_sub(1) as usize,
+        ));
     }
     if !summary_text.lines.is_empty() {
         if !lines.is_empty() {
@@ -925,7 +928,10 @@ fn render_issue_summary(
             "Summary:",
             Style::default().add_modifier(Modifier::BOLD),
         )));
-        lines.extend(limit_lines(&summary_text, layout.body.height.saturating_sub(1) as usize));
+        lines.extend(limit_lines(
+            &summary_text,
+            layout.body.height.saturating_sub(1) as usize,
+        ));
     }
 
     Paragraph::new(Text::from(lines))
@@ -988,7 +994,11 @@ fn render_editor(
 }
 
 fn focus_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
-    let color = if focused { Color::Cyan } else { Color::DarkGray };
+    let color = if focused {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(color))
@@ -998,7 +1008,12 @@ fn focus_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
 fn inner_rect(area: Rect) -> Rect {
     let width = area.width.saturating_sub(2);
     let height = area.height.saturating_sub(2);
-    Rect::new(area.x.saturating_add(1), area.y.saturating_add(1), width, height)
+    Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        width,
+        height,
+    )
 }
 
 fn render_viewer_footer(state: &ViewerState, _layout: &ViewerLayout) -> Paragraph<'static> {
@@ -1030,10 +1045,18 @@ fn render_viewer_help(_layout: &ViewerLayout) -> Paragraph<'static> {
 
 fn limit_lines(text: &Text<'static>, max_lines: usize) -> Vec<Line<'static>> {
     let mut lines = text.lines.clone();
-    while lines.first().map(|line| line_is_blank(line)).unwrap_or(false) {
+    while lines
+        .first()
+        .map(|line| line_is_blank(line))
+        .unwrap_or(false)
+    {
         lines.remove(0);
     }
-    while lines.last().map(|line| line_is_blank(line)).unwrap_or(false) {
+    while lines
+        .last()
+        .map(|line| line_is_blank(line))
+        .unwrap_or(false)
+    {
         lines.pop();
     }
     lines.into_iter().take(max_lines).collect()
