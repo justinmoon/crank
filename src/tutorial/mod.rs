@@ -851,7 +851,7 @@ fn fallback_steps(hunks: &[DiffHunk]) -> Vec<StepPlan> {
 }
 
 fn extract_json(raw: &str) -> Result<String> {
-    if let Ok(_) = serde_json::from_str::<serde_json::Value>(raw) {
+    if serde_json::from_str::<serde_json::Value>(raw).is_ok() {
         return Ok(raw.to_string());
     }
     let start = raw.find('{').ok_or_else(|| anyhow!("no JSON found"))?;
@@ -1197,10 +1197,10 @@ fn render_markdown(full: &TutorialFull, step: Option<usize>) -> Result<String> {
     Ok(output)
 }
 
-fn select_steps<'a>(
-    steps: &'a [TutorialStepContent],
+fn select_steps(
+    steps: &[TutorialStepContent],
     step: Option<usize>,
-) -> Result<Vec<&'a TutorialStepContent>> {
+) -> Result<Vec<&TutorialStepContent>> {
     if let Some(step) = step {
         if step == 0 || step > steps.len() {
             return Err(anyhow!("step out of range"));

@@ -399,7 +399,7 @@ fn render_preview(state: &mut InboxState, repo_root: &Path, _area: Rect) -> Para
 }
 
 fn render_help(_area: Rect) -> Paragraph<'static> {
-    let lines = vec![
+    let lines = [
         "Keys:",
         "  j/k or arrows: move",
         "  enter: open tutorial",
@@ -881,10 +881,10 @@ fn render_viewer_body(
             if let Some(editor_rect) = layout.editor {
                 let inner = inner_rect(editor_rect);
                 if let Some(editor) = state.editor.as_mut() {
-                    if (inner.height, inner.width) != state.last_editor_size {
-                        if editor.resize(inner.height, inner.width).is_ok() {
-                            state.last_editor_size = (inner.height, inner.width);
-                        }
+                    if (inner.height, inner.width) != state.last_editor_size
+                        && editor.resize(inner.height, inner.width).is_ok()
+                    {
+                        state.last_editor_size = (inner.height, inner.width);
                     }
                 }
             }
@@ -1030,7 +1030,7 @@ fn render_viewer_footer(state: &ViewerState, _layout: &ViewerLayout) -> Paragrap
 }
 
 fn render_viewer_help(_layout: &ViewerLayout) -> Paragraph<'static> {
-    let lines = vec![
+    let lines = [
         "Keys:",
         "  h/l or ←/→: navigate pages",
         "  Ctrl-T: toggle editor focus",
@@ -1045,18 +1045,10 @@ fn render_viewer_help(_layout: &ViewerLayout) -> Paragraph<'static> {
 
 fn limit_lines(text: &Text<'static>, max_lines: usize) -> Vec<Line<'static>> {
     let mut lines = text.lines.clone();
-    while lines
-        .first()
-        .map(|line| line_is_blank(line))
-        .unwrap_or(false)
-    {
+    while lines.first().map(line_is_blank).unwrap_or(false) {
         lines.remove(0);
     }
-    while lines
-        .last()
-        .map(|line| line_is_blank(line))
-        .unwrap_or(false)
-    {
+    while lines.last().map(line_is_blank).unwrap_or(false) {
         lines.pop();
     }
     lines.into_iter().take(max_lines).collect()
