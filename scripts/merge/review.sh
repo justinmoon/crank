@@ -80,9 +80,15 @@ output=$($crank_bin "${args[@]}" 2>&1)
 status=$?
 set -e
 
-review_log="$root/.crank/review-last.log"
-mkdir -p "$root/.crank"
-printf "%s\n" "$output" > "$review_log"
+review_log="${CRANK_REVIEW_LOG:-}"
+if [[ -z "$review_log" ]]; then
+  review_log="$(mktemp -t crank-review-XXXXXX.log 2>/dev/null || true)"
+fi
+if [[ -n "$review_log" ]]; then
+  if ! printf "%s\n" "$output" > "$review_log"; then
+    review_log=""
+  fi
+fi
 
 CRANK_REVIEW_OUTPUT="$output" CRANK_REVIEW_EXIT="$status" CRANK_REVIEW_LOG="$review_log" python3 - <<'PY'
 import json
