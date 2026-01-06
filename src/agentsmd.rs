@@ -19,7 +19,7 @@ Two tools in one:
 ## Tutorials
 - Generate from base -> branch tip: `crank tutorial generate --worktree . --base master --merge-commit HEAD [--replace]`
 - Include unstaged tracked changes: `git stash create` (captures staged+unstaged), then pass the SHA to `--merge-commit`
-- Include untracked files: `git stash push -u`, then `git rev-parse stash@{0}` for the SHA
+- Include untracked files: `git stash push -u`, then `git rev-parse stash@{{0}}` for the SHA
 
 ## Commands
 - crank agents.md (this doc)
