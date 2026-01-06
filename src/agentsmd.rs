@@ -16,6 +16,11 @@ Two tools in one:
 - The orchestrator will mark the task `needs_human` and release it when help is requested.
 - Once clarified, resume by flipping status back to `open` and re-run/claim.
 
+## Tutorials
+- Generate from base -> branch tip: `crank tutorial generate --worktree . --base master --merge-commit HEAD [--replace]`
+- Include unstaged tracked changes: `git stash create` (captures staged+unstaged), then pass the SHA to `--merge-commit`
+- Include untracked files: `git stash push -u`, then `git rev-parse stash@{0}` for the SHA
+
 ## Commands
 - crank agents.md (this doc)
 - crank task create "title" -a app -p 1-5
