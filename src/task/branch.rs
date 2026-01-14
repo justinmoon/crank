@@ -5,10 +5,10 @@ use std::process::Command;
 use anyhow::{anyhow, Context, Result};
 
 const MAX_BRANCH_LEN: usize = 20;
+const DEFAULT_MODEL: &str = "gpt-5-mini";
 
 pub fn generate_branch_name(task_path: &Path, _title: &str, _id: &str) -> Result<String> {
-    let model = env::var("TASK_BRANCH_MODEL")
-        .context("TASK_BRANCH_MODEL is required for AI branch generation")?;
+    let model = env::var("TASK_BRANCH_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     if model.trim().is_empty() {
         return Err(anyhow!(
             "TASK_BRANCH_MODEL is required for AI branch generation"
