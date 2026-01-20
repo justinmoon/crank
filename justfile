@@ -43,9 +43,38 @@ test-e2e: nix-check build
 pre-merge: check lint test build test-e2e
     @echo "All pre-merge checks passed!"
 
-# Install to ~/.cargo/bin
-install: nix-check
-    cargo install --path .
+# Install via nix (pushes current commit, updates ~/configs flake, rebuilds)
+install:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # Ensure we have a clean commit to push
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "Error: uncommitted changes. Commit first."
+        exit 1
+    fi
+    
+    COMMIT=$(git rev-parse HEAD)
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    
+    # Push current branch to github
+    echo "Pushing $BRANCH to github..."
+    git push origin "$BRANCH"
+    
+    # Update ~/configs flake.lock to use this commit
+    echo "Updating ~/configs flake to crank@$COMMIT..."
+    cd ~/configs
+    nix flake lock --update-input crank --override-input crank "github:justinmoon/crank/$COMMIT"
+    
+    # Rebuild (darwin-rebuild or nixos-rebuild based on OS)
+    echo "Rebuilding system..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        darwin-rebuild switch --flake .
+    else
+        sudo nixos-rebuild switch --flake .
+    fi
+    
+    echo "Done! crank installed from commit $COMMIT"
 
 # Nightly tasks
 nightly: nix-check
