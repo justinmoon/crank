@@ -37,7 +37,12 @@
             };
 
             cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-            crank = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+            crank = craneLib.buildPackage (commonArgs // {
+              inherit cargoArtifacts;
+              # Tests use $HOME/.crank which doesn't work in nix sandbox
+              # Run tests via `just test` before committing instead
+              doCheck = false;
+            });
             mkCrankAlertBadge = { xcodeBaseDir ? "/Applications/Xcode.app" }:
               let
                 xcodeWrapper = pkgs.xcodeenv.composeXcodeWrapper {
