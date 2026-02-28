@@ -10,9 +10,42 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
+const HELP_LONG_ABOUT: &str = "\
+Agent-first governor for plan-driven implementation.
+
+Crank runs long tasks from todo specs, coordinates implementer/reviewer roles,
+and keeps progress moving through checkpoint-based review decisions. Use it when
+you want repeatable, high-quality execution with continuous verification.";
+
+const HELP_AFTER_LONG: &str = "\
+Agent Quickstart:
+  1. Create a starter config:
+       crank init --output /tmp/crank.toml
+  2. Edit the config:
+       - set workspace + state_dir
+       - choose backend + role models
+       - add tasks with todo_file and dependencies
+  3. Run the governor:
+       crank run --config /tmp/crank.toml
+  4. Inspect state and progress:
+       crank ctl snapshot --state-dir <state_dir>
+  5. Check if safe to stop:
+       crank ctl can-exit --state-dir <state_dir>
+
+Run from source:
+  cargo run -- --help
+  cargo run -- run --config /tmp/crank.toml
+
+Quality loop:
+  - Execute the plan step-by-step.
+  - Require review/checkpoint signal before advancing.
+  - Fix serious workflow/reliability issues encountered during execution.
+";
+
 #[derive(Debug, Parser)]
 #[command(name = "crank")]
-#[command(about = "Unattended governor for long-running coding plans")]
+#[command(about = "Agent-first governor for plan-driven tasks")]
+#[command(long_about = HELP_LONG_ABOUT, after_long_help = HELP_AFTER_LONG)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -20,20 +53,23 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "Run the unattended governor from a TOML config")]
     Run(RunArgs),
+    #[command(about = "Write a starter TOML config template")]
     Init(InitArgs),
+    #[command(about = "Inspect or control a running governor state dir")]
     Ctl(CtlArgs),
 }
 
 #[derive(Debug, Args)]
 struct RunArgs {
-    #[arg(long)]
+    #[arg(long, help = "Path to crank TOML config")]
     config: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct InitArgs {
-    #[arg(long)]
+    #[arg(long, help = "Output path for starter TOML config")]
     output: PathBuf,
 }
 
@@ -45,18 +81,21 @@ struct CtlArgs {
 
 #[derive(Debug, Subcommand)]
 enum CtlCommand {
+    #[command(about = "Print current run state JSON")]
     Snapshot {
-        #[arg(long)]
+        #[arg(long, help = "Governor state directory path")]
         state_dir: PathBuf,
     },
+    #[command(about = "Exit 0 if run is safe to stop; 1 otherwise")]
     CanExit {
-        #[arg(long)]
+        #[arg(long, help = "Governor state directory path")]
         state_dir: PathBuf,
     },
+    #[command(about = "Append an operator note to the run journal")]
     Note {
-        #[arg(long)]
+        #[arg(long, help = "Governor state directory path")]
         state_dir: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Note text to append to journal")]
         message: String,
     },
 }
