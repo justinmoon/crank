@@ -1,5 +1,7 @@
 # Agent Instructions
 
+- Run `./scripts/agent-brief` once at the start of each new agent session in this worktree (not every turn).
+- Rerun only if asked, if you switch worktrees, or if the first run failed.
 - "land it" == run land workflow template
 - Never manual merge to `master` (or `main`)
 - Use:

@@ -10,41 +10,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
-const HELP_LONG_ABOUT: &str = "\
-Agent-first governor for plan-driven implementation.
-
-Crank runs long tasks from todo specs, coordinates implementer/reviewer roles,
-and keeps progress moving through checkpoint-based review decisions. Use it when
-you want repeatable, high-quality execution with continuous verification.";
-
-const HELP_AFTER_LONG: &str = "\
-Agent Quickstart:
-  1. Create a starter config:
-       crank init --output /tmp/crank.toml
-  2. Edit the config:
-       - set workspace + state_dir
-       - choose backend + role models
-       - add tasks with todo_file and dependencies
-  3. Run the governor:
-       crank run --config /tmp/crank.toml
-  4. Inspect state and progress:
-       crank ctl snapshot --state-dir <state_dir>
-  5. Check if safe to stop:
-       crank ctl can-exit --state-dir <state_dir>
-
-Run from source:
-  cargo run -- --help
-  cargo run -- run --config /tmp/crank.toml
-
-Quality loop:
-  - Execute the plan step-by-step.
-  - Require review/checkpoint signal before advancing.
-  - Fix serious workflow/reliability issues encountered during execution.
-
-Default role contract:
-  - Crank internally enforces implementer/reviewer todo workflow defaults.
-  - User prompts can stay short (e.g. \"implement <todo> with crank\").
-";
+const HELP_LONG_ABOUT: &str = include_str!("../prompts/help_long_about.md");
+const HELP_AFTER_LONG: &str = include_str!("../prompts/help_after_long.md");
+const TURN_PROMPT_TEMPLATE: &str = include_str!("../prompts/turn_prompt.md");
 
 #[derive(Debug, Parser)]
 #[command(name = "crank")]
@@ -618,87 +586,94 @@ fn status_table(state: &RunState) -> String {
     lines.join("\n")
 }
 
+fn unresolved_placeholders(input: &str) -> Vec<String> {
+    let mut pending = Vec::new();
+    let mut rest = input;
+
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            break;
+        };
+        let key = after[..end].trim();
+        if !key.is_empty() && !pending.iter().any(|existing| existing == key) {
+            pending.push(key.to_string());
+        }
+        rest = &after[end + 2..];
+    }
+
+    pending
+}
+
+fn render_template(template: &str, vars: &[(&str, String)]) -> Result<String> {
+    let mut rendered = template.to_string();
+
+    for (key, value) in vars {
+        let placeholder = format!("{{{{{}}}}}", key);
+        rendered = rendered.replace(&placeholder, value);
+    }
+
+    let pending = unresolved_placeholders(&rendered);
+    if !pending.is_empty() {
+        return Err(anyhow!(
+            "unresolved template placeholders: {}",
+            pending.join(", ")
+        ));
+    }
+
+    Ok(rendered)
+}
+
 fn build_prompt(
     cfg: &Config,
     state: &RunState,
     task: &TaskRuntime,
     recovery_note: Option<&str>,
-) -> String {
-    let mut out = String::new();
-    out.push_str("You are the unattended orchestration agent.\n");
-    out.push_str(
-        "No human is available in this run. Never ask questions that require user input.\n",
-    );
-    out.push_str(
-        "If blocked, take best-effort path, write blockers to JOURNAL.md, and continue.\n\n",
-    );
-
-    out.push_str("Run context:\n");
-    out.push_str(&format!("- run_id: {}\n", state.run_id));
-    out.push_str(&format!("- workspace: {}\n", cfg.workspace.display()));
-    out.push_str(&format!(
-        "- journal: {}\n",
-        journal_path(&cfg.state_dir).display()
-    ));
-    out.push_str(&format!("- state_dir: {}\n", cfg.state_dir.display()));
-    out.push_str(&format!(
-        "- thread_id: {}\n",
-        state.thread_id.as_deref().unwrap_or("(new)")
-    ));
-    out.push_str("\nTask board:\n");
-    out.push_str(&status_table(state));
-    out.push_str("\n\nCurrent task:\n");
-    out.push_str(&format!("- id: {}\n", task.id));
-    out.push_str(&format!("- todo_file: {}\n", task.todo_file));
-    out.push_str(&format!("- coord_dir: {}\n", task.coord_dir));
-    if let Some(completion_file) = &task.completion_file {
-        out.push_str(&format!("- completion_file: {}\n", completion_file));
+) -> Result<String> {
+    let completion_line = if let Some(completion_file) = &task.completion_file {
+        format!("- completion_file: {completion_file}")
     } else {
-        out.push_str("- completion rule: coord_dir/state.md must be exactly 'done'\n");
-    }
+        "- completion rule: coord_dir/state.md must be exactly 'done'".to_string()
+    };
 
-    out.push_str("\nReview role policy for orchestrate-todo:\n");
-    out.push_str(&format!(
-        "- implementer: harness={} model={} thinking={}\n",
-        cfg.roles.implementer.harness, cfg.roles.implementer.model, cfg.roles.implementer.thinking
-    ));
-    out.push_str(&format!(
-        "- reviewer-1: harness={} model={} thinking={}\n",
-        cfg.roles.reviewer_1.harness, cfg.roles.reviewer_1.model, cfg.roles.reviewer_1.thinking
-    ));
-    out.push_str(&format!(
-        "- reviewer-2: harness={} model={} thinking={}\n",
-        cfg.roles.reviewer_2.harness, cfg.roles.reviewer_2.model, cfg.roles.reviewer_2.thinking
-    ));
+    let recovery_block = recovery_note
+        .map(|note| format!("\nRecovery note from governor:\n{note}\n"))
+        .unwrap_or_default();
 
-    out.push_str("\nRequired behavior:\n");
-    out.push_str("1. Continue implementation for current task and keep momentum.\n");
-    out.push_str("2. Use orchestrate-todo workflow against the task todo file and coord dir.\n");
-    out.push_str("3. Enforce these default role contracts without asking user to name skills:\n");
-    out.push_str("   - implementer contract: execute implement-todo semantics for the todo plan; post a checkpoint after every plan step; wait for reviewer decision; if rework is requested, fix and re-submit for the same step; do not batch multiple steps into one checkpoint.\n");
-    out.push_str("   - reviewer contract: execute review-todo semantics for each checkpoint; review against step acceptance criteria and changed files; return explicit verdicts (APPROVE / CHANGES_REQUESTED / BLOCKED / GIVE_UP) with concrete file-level feedback.\n");
-    out.push_str(
-        "4. Reviewer count default is 1 reviewer unless task/risk explicitly requires 2.\n",
-    );
-    out.push_str("5. Do not stop this run for user questions.\n");
-    out.push_str(
-        "6. If blocked, log a blocker note in JOURNAL.md and continue with best-effort output.\n",
-    );
-
-    if let Some(note) = recovery_note {
-        out.push_str("\nRecovery note from governor:\n");
-        out.push_str(note);
-        out.push('\n');
-    }
-
-    out.push_str(
-        "\nAt the end of your response, include this machine-readable block exactly once:\n",
-    );
-    out.push_str("<CONTROL_JSON>\n");
-    out.push_str("{\"task_id\":\"...\",\"status\":\"in_progress|completed|blocked\",\"needs_user_input\":false,\"summary\":\"...\",\"next_action\":\"...\"}\n");
-    out.push_str("</CONTROL_JSON>\n");
-
-    out
+    render_template(
+        TURN_PROMPT_TEMPLATE,
+        &[
+            ("run_id", state.run_id.clone()),
+            ("workspace", cfg.workspace.display().to_string()),
+            (
+                "journal",
+                journal_path(&cfg.state_dir).display().to_string(),
+            ),
+            ("state_dir", cfg.state_dir.display().to_string()),
+            (
+                "thread_id",
+                state.thread_id.as_deref().unwrap_or("(new)").to_string(),
+            ),
+            ("task_board", status_table(state)),
+            ("task_id", task.id.clone()),
+            ("todo_file", task.todo_file.clone()),
+            ("coord_dir", task.coord_dir.clone()),
+            ("completion_line", completion_line),
+            ("implementer_harness", cfg.roles.implementer.harness.clone()),
+            ("implementer_model", cfg.roles.implementer.model.clone()),
+            (
+                "implementer_thinking",
+                cfg.roles.implementer.thinking.clone(),
+            ),
+            ("reviewer_1_harness", cfg.roles.reviewer_1.harness.clone()),
+            ("reviewer_1_model", cfg.roles.reviewer_1.model.clone()),
+            ("reviewer_1_thinking", cfg.roles.reviewer_1.thinking.clone()),
+            ("reviewer_2_harness", cfg.roles.reviewer_2.harness.clone()),
+            ("reviewer_2_model", cfg.roles.reviewer_2.model.clone()),
+            ("reviewer_2_thinking", cfg.roles.reviewer_2.thinking.clone()),
+            ("recovery_block", recovery_block),
+        ],
+    )
 }
 
 fn extract_control_block(text: &str) -> Option<ControlBlock> {
@@ -1017,7 +992,7 @@ fn run_governor(cfg: Config) -> Result<()> {
         }
 
         let task_snapshot = state.tasks[idx].clone();
-        let prompt = build_prompt(&cfg, &state, &task_snapshot, recovery_note.as_deref());
+        let prompt = build_prompt(&cfg, &state, &task_snapshot, recovery_note.as_deref())?;
 
         state.cycle = state.cycle.saturating_add(1);
 
@@ -1221,5 +1196,26 @@ fn main() -> Result<()> {
             }
             CtlCommand::Note { state_dir, message } => ctl_note(&state_dir, &message),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_template_replaces_placeholders() {
+        let rendered = render_template("hello {{name}}", &[("name", "crank".to_string())]).unwrap();
+        assert_eq!(rendered, "hello crank");
+    }
+
+    #[test]
+    fn render_template_fails_with_unresolved_placeholders() {
+        let err = render_template(
+            "hello {{name}} {{missing}}",
+            &[("name", "crank".to_string())],
+        )
+        .expect_err("template should fail when placeholders are unresolved");
+        assert!(err.to_string().contains("missing"));
     }
 }

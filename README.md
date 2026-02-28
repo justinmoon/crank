@@ -42,3 +42,24 @@ cargo run -- ctl can-exit --state-dir runs/mock-call-plans
 ```
 
 This example validates dependency ordering across 4 tasks and the completion gate.
+
+## Prompt Templates
+
+Prompt text is stored in `prompts/*.md` and embedded into the binary via `include_str!`.
+This keeps prompt editing readable and allows simple `{{placeholder}}` templating in Rust.
+
+## Nix / Flake
+
+This repo now includes a flake with a Rust dev shell and reproducible checks:
+
+```bash
+nix develop
+nix flake check
+```
+
+`nix flake check` runs:
+
+- package build
+- `cargo test --frozen --locked`
+- `cargo fmt --all -- --check`
+- `cargo clippy --frozen --all-targets`
