@@ -1,12 +1,14 @@
 Agent Quickstart:
   1. Create a starter config:
        crank init --output /tmp/crank.toml
+       crank init --output /tmp/crank.toml --team xhigh
   2. Edit the config:
        - set workspace + state_dir
        - choose backend + role models
        - add tasks with todo_file and dependencies
   3. Run the governor:
        crank run --config /tmp/crank.toml
+       crank run --config /tmp/crank.toml --team xhigh
   4. Inspect state and progress:
        crank ctl snapshot --state-dir <state_dir>
   5. Check if safe to stop:

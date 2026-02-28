@@ -7,7 +7,9 @@ It runs a single orchestrator loop, persists state to disk, and keeps going unti
 ## Commands
 
 - `cargo run -- run --config <file>`
+- `cargo run -- run --config <file> --team xhigh`
 - `cargo run -- init --output <file>`
+- `cargo run -- init --output <file> --team xhigh`
 - `cargo run -- ctl snapshot --state-dir <dir>`
 - `cargo run -- ctl can-exit --state-dir <dir>`
 - `cargo run -- ctl note --state-dir <dir> --message "..."`
@@ -64,7 +66,11 @@ Store reusable team definitions in `teams/*.toml`, then use:
 ```bash
 cargo run -- teams list
 cargo run -- teams validate --team xhigh
+cargo run -- run --config /tmp/crank.toml --team xhigh
 ```
+
+Builtin team:
+- `xhigh` (codex implementer + codex reviewer-1 + claude reviewer-2, all `xhigh`)
 
 ## Nix / Flake
 

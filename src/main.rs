@@ -42,12 +42,24 @@ enum Commands {
 struct RunArgs {
     #[arg(long, help = "Path to crank TOML config")]
     config: PathBuf,
+    #[arg(long, help = "Apply team by name (e.g. xhigh) to role settings")]
+    team: Option<String>,
+    #[arg(long, help = "Apply team from explicit TOML file path")]
+    team_file: Option<PathBuf>,
+    #[arg(long, default_value = DEFAULT_TEAMS_DIR, help = "Teams directory")]
+    teams_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct InitArgs {
     #[arg(long, help = "Output path for starter TOML config")]
     output: PathBuf,
+    #[arg(long, help = "Seed config with team by name (e.g. xhigh)")]
+    team: Option<String>,
+    #[arg(long, help = "Seed config with team from explicit TOML file path")]
+    team_file: Option<PathBuf>,
+    #[arg(long, default_value = DEFAULT_TEAMS_DIR, help = "Teams directory")]
+    teams_dir: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -352,6 +364,46 @@ fn default_mock_steps_per_task() -> u32 {
     2
 }
 
+fn default_roles() -> RolesConfig {
+    RolesConfig {
+        implementer: RoleConfig {
+            harness: "codex".to_string(),
+            model: "gpt-5.3-codex".to_string(),
+            thinking: "xhigh".to_string(),
+            launch_args: vec![REQUIRED_CODEX_ARG.to_string()],
+        },
+        reviewer_1: RoleConfig {
+            harness: "codex".to_string(),
+            model: "gpt-5.3-codex".to_string(),
+            thinking: "xhigh".to_string(),
+            launch_args: vec![REQUIRED_CODEX_ARG.to_string()],
+        },
+        reviewer_2: RoleConfig {
+            harness: "claude".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            thinking: "xhigh".to_string(),
+            launch_args: vec![REQUIRED_CLAUDE_ARG.to_string()],
+        },
+    }
+}
+
+fn builtin_team(name: &str) -> Option<TeamFile> {
+    match name {
+        "xhigh" => Some(TeamFile {
+            name: Some("xhigh".to_string()),
+            description: Some(
+                "Codex implementer + codex reviewer-1 + Claude reviewer-2, all xhigh".to_string(),
+            ),
+            roles: default_roles(),
+        }),
+        _ => None,
+    }
+}
+
+fn builtin_team_names() -> &'static [&'static str] {
+    &["xhigh"]
+}
+
 fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
@@ -502,6 +554,10 @@ fn parse_team_file(path: &Path) -> Result<TeamFile> {
 }
 
 fn list_team_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
     let mut files = Vec::new();
     let entries =
         fs::read_dir(dir).with_context(|| format!("failed to read teams dir {}", dir.display()))?;
@@ -523,13 +579,54 @@ fn resolve_team_path(dir: &Path, team: &str) -> PathBuf {
     dir.join(file)
 }
 
+fn load_team(dir: &Path, team: &str) -> Result<TeamFile> {
+    let path = resolve_team_path(dir, team);
+    if path.exists() {
+        return parse_team_file(&path);
+    }
+    if let Some(builtin) = builtin_team(team) {
+        return Ok(builtin);
+    }
+    Err(anyhow!(
+        "team '{}' not found in {} and not a builtin team",
+        team,
+        dir.display()
+    ))
+}
+
+fn load_team_from_file(path: &Path) -> Result<TeamFile> {
+    parse_team_file(path)
+}
+
 fn cmd_teams_list(dir: &Path) -> Result<()> {
     let files = list_team_files(dir)?;
-    if files.is_empty() {
+    let mut file_team_names = std::collections::BTreeSet::new();
+    for path in &files {
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            file_team_names.insert(stem.to_string());
+        }
+    }
+
+    for name in builtin_team_names() {
+        if file_team_names.contains(*name) {
+            continue;
+        }
+        if let Some(team) = builtin_team(name) {
+            let desc = team.description.unwrap_or_default();
+            if desc.is_empty() {
+                println!("{name}");
+            } else {
+                println!("{name}\t{desc}");
+            }
+        }
+    }
+
+    if files.is_empty() && builtin_team_names().is_empty() {
         println!("(no teams found in {})", dir.display());
         return Ok(());
     }
 
+    let mut file_count = 0usize;
     for path in files {
         let fallback_name = path
             .file_stem()
@@ -550,6 +647,11 @@ fn cmd_teams_list(dir: &Path) -> Result<()> {
                 println!("{fallback_name}\tINVALID ({err})");
             }
         }
+        file_count += 1;
+    }
+
+    if file_count == 0 {
+        println!("(no file-based teams in {})", dir.display());
     }
     Ok(())
 }
@@ -568,28 +670,54 @@ fn cmd_teams_validate(args: &TeamsValidateArgs) -> Result<()> {
         return Err(anyhow!("use either --team or --file, not both"));
     }
 
-    let files: Vec<PathBuf> = if args.all {
-        list_team_files(&args.dir)?
-    } else if let Some(path) = &args.file {
-        vec![path.clone()]
-    } else {
-        vec![resolve_team_path(
-            &args.dir,
-            args.team.as_deref().expect("checked above"),
-        )]
-    };
-
-    if files.is_empty() {
-        return Err(anyhow!("no team files found to validate"));
-    }
-
     let mut failures = Vec::new();
-    for file in &files {
-        match parse_team_file(file) {
-            Ok(_) => println!("ok\t{}", file.display()),
+    if args.all {
+        let files = list_team_files(&args.dir)?;
+        let mut file_team_names = std::collections::BTreeSet::new();
+        for file in &files {
+            if let Some(stem) = file.file_stem().and_then(|s| s.to_str()) {
+                file_team_names.insert(stem.to_string());
+            }
+        }
+        for name in builtin_team_names() {
+            if file_team_names.contains(*name) {
+                continue;
+            }
+            match load_team(&args.dir, name) {
+                Ok(_) => println!("ok\tbuiltin:{name}"),
+                Err(err) => {
+                    println!("err\tbuiltin:{name}\t{err}");
+                    failures.push(format!("builtin:{name}: {err}"));
+                }
+            }
+        }
+        for file in &files {
+            match parse_team_file(file) {
+                Ok(_) => println!("ok\t{}", file.display()),
+                Err(err) => {
+                    println!("err\t{}\t{}", file.display(), err);
+                    failures.push(format!("{}: {err}", file.display()));
+                }
+            }
+        }
+        if files.is_empty() && builtin_team_names().is_empty() {
+            failures.push("no teams available to validate".to_string());
+        }
+    } else if let Some(path) = &args.file {
+        match load_team_from_file(path) {
+            Ok(_) => println!("ok\t{}", path.display()),
             Err(err) => {
-                println!("err\t{}\t{}", file.display(), err);
-                failures.push(format!("{}: {err}", file.display()));
+                println!("err\t{}\t{}", path.display(), err);
+                failures.push(format!("{}: {err}", path.display()));
+            }
+        }
+    } else {
+        let team_name = args.team.as_deref().expect("checked above");
+        match load_team(&args.dir, team_name) {
+            Ok(_) => println!("ok\t{}", team_name),
+            Err(err) => {
+                println!("err\t{}\t{}", team_name, err);
+                failures.push(format!("{team_name}: {err}"));
             }
         }
     }
@@ -620,15 +748,6 @@ fn load_config(path: &Path) -> Result<Config> {
             return Err(anyhow!("duplicate task id '{}'", task.id));
         }
     }
-
-    validate_roles(&cfg.roles).with_context(|| {
-        format!(
-            "invalid roles in config {} (codex requires '{}' and claude requires '{}')",
-            path.display(),
-            REQUIRED_CODEX_ARG,
-            REQUIRED_CLAUDE_ARG
-        )
-    })?;
 
     Ok(cfg)
 }
@@ -1304,8 +1423,33 @@ fn run_governor(cfg: Config) -> Result<()> {
     Ok(())
 }
 
-fn write_default_config(output: &Path) -> Result<()> {
-    let content = r#"run_id = "pika-call-plans"
+fn toml_string(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn toml_array(values: &[String]) -> String {
+    let quoted: Vec<String> = values.iter().map(|v| toml_string(v)).collect();
+    format!("[{}]", quoted.join(", "))
+}
+
+fn render_role_block(name: &str, role: &RoleConfig) -> String {
+    format!(
+        r#"[roles.{name}]
+harness = {harness}
+model = {model}
+thinking = {thinking}
+launch_args = {launch_args}
+"#,
+        harness = toml_string(&role.harness),
+        model = toml_string(&role.model),
+        thinking = toml_string(&role.thinking),
+        launch_args = toml_array(&role.launch_args),
+    )
+}
+
+fn write_default_config(output: &Path, roles: &RolesConfig) -> Result<()> {
+    let content = format!(
+        r#"run_id = "pika-call-plans"
 workspace = "/Users/justin/code/pika"
 state_dir = "/Users/justin/code/crank/runs/pika-call-plans"
 unattended = true
@@ -1329,23 +1473,9 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 extra_args = []
 
-[roles.implementer]
-harness = "codex"
-model = "gpt-5.3-codex"
-thinking = "xhigh"
-launch_args = ["--yolo"]
-
-[roles.reviewer_1]
-harness = "codex"
-model = "gpt-5.3-codex"
-thinking = "xhigh"
-launch_args = ["--yolo"]
-
-[roles.reviewer_2]
-harness = "claude"
-model = "claude-opus-4-6"
-thinking = "xhigh"
-launch_args = ["--dangerously-skip-permissions"]
+{implementer_role}
+{reviewer_1_role}
+{reviewer_2_role}
 
 [[tasks]]
 id = "call-audio"
@@ -1366,7 +1496,11 @@ depends_on = ["call-audio", "call-transport"]
 id = "call-native-audio"
 todo_file = "/Users/justin/code/pika/todos/call-native-audio-plan.md"
 depends_on = ["call-audio", "call-transport", "call-video"]
-"#;
+"#,
+        implementer_role = render_role_block("implementer", &roles.implementer),
+        reviewer_1_role = render_role_block("reviewer_1", &roles.reviewer_1),
+        reviewer_2_role = render_role_block("reviewer_2", &roles.reviewer_2),
+    );
 
     if let Some(parent) = output.parent() {
         ensure_dir(parent)?;
@@ -1394,16 +1528,67 @@ fn ctl_note(state_dir: &Path, message: &str) -> Result<()> {
     append_journal(&journal_path(state_dir), "operator note", message)
 }
 
+fn resolve_team_roles(
+    team: Option<&str>,
+    team_file: Option<&Path>,
+    teams_dir: &Path,
+) -> Result<Option<RolesConfig>> {
+    if team.is_some() && team_file.is_some() {
+        return Err(anyhow!("use either --team or --team-file, not both"));
+    }
+
+    if let Some(path) = team_file {
+        let loaded = load_team_from_file(path)?;
+        return Ok(Some(loaded.roles));
+    }
+
+    if let Some(name) = team {
+        let loaded = load_team(teams_dir, name)?;
+        return Ok(Some(loaded.roles));
+    }
+
+    Ok(None)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Run(args) => {
-            let cfg = load_config(&args.config)?;
+            let mut cfg = load_config(&args.config)?;
+            if let Some(team_roles) = resolve_team_roles(
+                args.team.as_deref(),
+                args.team_file.as_deref(),
+                &args.teams_dir,
+            )? {
+                cfg.roles = team_roles;
+            }
+            validate_roles(&cfg.roles).with_context(|| {
+                format!(
+                    "invalid roles for run config {} (codex requires '{}' and claude requires '{}')",
+                    args.config.display(),
+                    REQUIRED_CODEX_ARG,
+                    REQUIRED_CLAUDE_ARG
+                )
+            })?;
             run_governor(cfg)
         }
         Commands::Init(args) => {
-            write_default_config(&args.output)?;
+            let roles = resolve_team_roles(
+                args.team.as_deref(),
+                args.team_file.as_deref(),
+                &args.teams_dir,
+            )?
+            .unwrap_or_else(default_roles);
+            validate_roles(&roles).with_context(|| {
+                format!(
+                    "invalid team roles for init output {} (codex requires '{}' and claude requires '{}')",
+                    args.output.display(),
+                    REQUIRED_CODEX_ARG,
+                    REQUIRED_CLAUDE_ARG
+                )
+            })?;
+            write_default_config(&args.output, &roles)?;
             println!("wrote {}", args.output.display());
             Ok(())
         }
@@ -1445,5 +1630,23 @@ mod tests {
         )
         .expect_err("template should fail when placeholders are unresolved");
         assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn codex_role_requires_yolo() {
+        let role = RoleConfig {
+            harness: "codex".to_string(),
+            model: "gpt-5.3-codex".to_string(),
+            thinking: "xhigh".to_string(),
+            launch_args: vec![],
+        };
+        let err = validate_role("implementer", &role).expect_err("should require --yolo");
+        assert!(err.to_string().contains(REQUIRED_CODEX_ARG));
+    }
+
+    #[test]
+    fn builtin_team_xhigh_is_valid() {
+        let team = builtin_team("xhigh").expect("xhigh should exist");
+        validate_roles(&team.roles).expect("xhigh roles must validate");
     }
 }
