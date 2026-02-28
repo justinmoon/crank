@@ -1,3 +1,5 @@
 /target
 /runs/
+.direnv/
+.crank/
 *.log
