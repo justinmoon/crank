@@ -21,16 +21,19 @@ steps_per_task = 2
 harness = "codex"
 model = "gpt-5.3-codex"
 thinking = "xhigh"
+launch_args = ["--yolo"]
 
 [roles.reviewer_1]
 harness = "codex"
 model = "gpt-5.3-codex"
 thinking = "xhigh"
+launch_args = ["--yolo"]
 
 [roles.reviewer_2]
 harness = "claude"
 model = "claude-opus-4-6"
 thinking = "xhigh"
+launch_args = ["--dangerously-skip-permissions"]
 
 [[tasks]]
 id = "call-audio"

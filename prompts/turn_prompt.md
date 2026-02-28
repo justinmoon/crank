@@ -19,9 +19,9 @@ Current task:
 {{completion_line}}
 
 Review role policy for orchestrate-todo:
-- implementer: harness={{implementer_harness}} model={{implementer_model}} thinking={{implementer_thinking}}
-- reviewer-1: harness={{reviewer_1_harness}} model={{reviewer_1_model}} thinking={{reviewer_1_thinking}}
-- reviewer-2: harness={{reviewer_2_harness}} model={{reviewer_2_model}} thinking={{reviewer_2_thinking}}
+- implementer: harness={{implementer_harness}} model={{implementer_model}} thinking={{implementer_thinking}} launch_args={{implementer_args}}
+- reviewer-1: harness={{reviewer_1_harness}} model={{reviewer_1_model}} thinking={{reviewer_1_thinking}} launch_args={{reviewer_1_args}}
+- reviewer-2: harness={{reviewer_2_harness}} model={{reviewer_2_model}} thinking={{reviewer_2_thinking}} launch_args={{reviewer_2_args}}
 
 Required behavior:
 1. Continue implementation for current task and keep momentum.

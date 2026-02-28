@@ -13,6 +13,9 @@ use std::time::{Duration, UNIX_EPOCH};
 const HELP_LONG_ABOUT: &str = include_str!("../prompts/help_long_about.md");
 const HELP_AFTER_LONG: &str = include_str!("../prompts/help_after_long.md");
 const TURN_PROMPT_TEMPLATE: &str = include_str!("../prompts/turn_prompt.md");
+const DEFAULT_TEAMS_DIR: &str = "teams";
+const REQUIRED_CODEX_ARG: &str = "--yolo";
+const REQUIRED_CLAUDE_ARG: &str = "--dangerously-skip-permissions";
 
 #[derive(Debug, Parser)]
 #[command(name = "crank")]
@@ -31,6 +34,8 @@ enum Commands {
     Init(InitArgs),
     #[command(about = "Inspect or control a running governor state dir")]
     Ctl(CtlArgs),
+    #[command(about = "Manage reusable role/model team definitions")]
+    Teams(TeamsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -49,6 +54,12 @@ struct InitArgs {
 struct CtlArgs {
     #[command(subcommand)]
     command: CtlCommand,
+}
+
+#[derive(Debug, Args)]
+struct TeamsArgs {
+    #[command(subcommand)]
+    command: TeamsCommand,
 }
 
 #[derive(Debug, Subcommand)]
@@ -70,6 +81,29 @@ enum CtlCommand {
         #[arg(long, help = "Note text to append to journal")]
         message: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum TeamsCommand {
+    #[command(about = "List available teams")]
+    List {
+        #[arg(long, default_value = DEFAULT_TEAMS_DIR, help = "Teams directory")]
+        dir: PathBuf,
+    },
+    #[command(about = "Validate team file(s) and required harness launch args")]
+    Validate(TeamsValidateArgs),
+}
+
+#[derive(Debug, Args)]
+struct TeamsValidateArgs {
+    #[arg(long, help = "Validate a specific team by name (file stem)")]
+    team: Option<String>,
+    #[arg(long, help = "Validate an explicit team file path")]
+    file: Option<PathBuf>,
+    #[arg(long, default_value = DEFAULT_TEAMS_DIR, help = "Teams directory")]
+    dir: PathBuf,
+    #[arg(long, help = "Validate all *.toml files in teams directory")]
+    all: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,6 +181,15 @@ struct RoleConfig {
     harness: String,
     model: String,
     thinking: String,
+    #[serde(default)]
+    launch_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TeamFile {
+    name: Option<String>,
+    description: Option<String>,
+    roles: RolesConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -401,6 +444,163 @@ fn check_coord_done(coord_dir: &Path) -> bool {
     text.trim() == "done"
 }
 
+fn required_launch_arg_for_harness(harness: &str) -> Option<&'static str> {
+    match harness {
+        "codex" => Some(REQUIRED_CODEX_ARG),
+        "claude" => Some(REQUIRED_CLAUDE_ARG),
+        _ => None,
+    }
+}
+
+fn role_launch_args_display(role: &RoleConfig) -> String {
+    if role.launch_args.is_empty() {
+        "(none)".to_string()
+    } else {
+        role.launch_args.join(" ")
+    }
+}
+
+fn validate_role(role_name: &str, role: &RoleConfig) -> Result<()> {
+    if role.harness.trim().is_empty() {
+        return Err(anyhow!("role '{role_name}' must set harness"));
+    }
+    if role.model.trim().is_empty() {
+        return Err(anyhow!("role '{role_name}' must set model"));
+    }
+    if role.thinking.trim().is_empty() {
+        return Err(anyhow!("role '{role_name}' must set thinking"));
+    }
+
+    if let Some(required) = required_launch_arg_for_harness(role.harness.as_str()) {
+        let has_required = role.launch_args.iter().any(|arg| arg == required);
+        if !has_required {
+            return Err(anyhow!(
+                "role '{role_name}' (harness={}) must include launch arg '{}'",
+                role.harness,
+                required
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_roles(roles: &RolesConfig) -> Result<()> {
+    validate_role("implementer", &roles.implementer)?;
+    validate_role("reviewer_1", &roles.reviewer_1)?;
+    validate_role("reviewer_2", &roles.reviewer_2)?;
+    Ok(())
+}
+
+fn parse_team_file(path: &Path) -> Result<TeamFile> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let team: TeamFile =
+        toml::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))?;
+    validate_roles(&team.roles).with_context(|| format!("invalid team {}", path.display()))?;
+    Ok(team)
+}
+
+fn list_team_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let entries =
+        fs::read_dir(dir).with_context(|| format!("failed to read teams dir {}", dir.display()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("toml") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn resolve_team_path(dir: &Path, team: &str) -> PathBuf {
+    let mut file = team.to_string();
+    if !file.ends_with(".toml") {
+        file.push_str(".toml");
+    }
+    dir.join(file)
+}
+
+fn cmd_teams_list(dir: &Path) -> Result<()> {
+    let files = list_team_files(dir)?;
+    if files.is_empty() {
+        println!("(no teams found in {})", dir.display());
+        return Ok(());
+    }
+
+    for path in files {
+        let fallback_name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("(unknown)")
+            .to_string();
+        match parse_team_file(&path) {
+            Ok(team) => {
+                let name = team.name.unwrap_or(fallback_name);
+                let desc = team.description.unwrap_or_default();
+                if desc.is_empty() {
+                    println!("{name}");
+                } else {
+                    println!("{name}\t{desc}");
+                }
+            }
+            Err(err) => {
+                println!("{fallback_name}\tINVALID ({err})");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cmd_teams_validate(args: &TeamsValidateArgs) -> Result<()> {
+    let requested = args.file.is_some() || args.team.is_some() || args.all;
+    if !requested {
+        return Err(anyhow!(
+            "provide one of --all, --team <name>, or --file <path>"
+        ));
+    }
+    if args.all && (args.file.is_some() || args.team.is_some()) {
+        return Err(anyhow!("--all cannot be combined with --team/--file"));
+    }
+    if args.file.is_some() && args.team.is_some() {
+        return Err(anyhow!("use either --team or --file, not both"));
+    }
+
+    let files: Vec<PathBuf> = if args.all {
+        list_team_files(&args.dir)?
+    } else if let Some(path) = &args.file {
+        vec![path.clone()]
+    } else {
+        vec![resolve_team_path(
+            &args.dir,
+            args.team.as_deref().expect("checked above"),
+        )]
+    };
+
+    if files.is_empty() {
+        return Err(anyhow!("no team files found to validate"));
+    }
+
+    let mut failures = Vec::new();
+    for file in &files {
+        match parse_team_file(file) {
+            Ok(_) => println!("ok\t{}", file.display()),
+            Err(err) => {
+                println!("err\t{}\t{}", file.display(), err);
+                failures.push(format!("{}: {err}", file.display()));
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!("team validation failed:\n{}", failures.join("\n")))
+    }
+}
+
 fn load_config(path: &Path) -> Result<Config> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("failed to read config {}", path.display()))?;
@@ -420,6 +620,15 @@ fn load_config(path: &Path) -> Result<Config> {
             return Err(anyhow!("duplicate task id '{}'", task.id));
         }
     }
+
+    validate_roles(&cfg.roles).with_context(|| {
+        format!(
+            "invalid roles in config {} (codex requires '{}' and claude requires '{}')",
+            path.display(),
+            REQUIRED_CODEX_ARG,
+            REQUIRED_CLAUDE_ARG
+        )
+    })?;
 
     Ok(cfg)
 }
@@ -665,12 +874,24 @@ fn build_prompt(
                 "implementer_thinking",
                 cfg.roles.implementer.thinking.clone(),
             ),
+            (
+                "implementer_args",
+                role_launch_args_display(&cfg.roles.implementer),
+            ),
             ("reviewer_1_harness", cfg.roles.reviewer_1.harness.clone()),
             ("reviewer_1_model", cfg.roles.reviewer_1.model.clone()),
             ("reviewer_1_thinking", cfg.roles.reviewer_1.thinking.clone()),
+            (
+                "reviewer_1_args",
+                role_launch_args_display(&cfg.roles.reviewer_1),
+            ),
             ("reviewer_2_harness", cfg.roles.reviewer_2.harness.clone()),
             ("reviewer_2_model", cfg.roles.reviewer_2.model.clone()),
             ("reviewer_2_thinking", cfg.roles.reviewer_2.thinking.clone()),
+            (
+                "reviewer_2_args",
+                role_launch_args_display(&cfg.roles.reviewer_2),
+            ),
             ("recovery_block", recovery_block),
         ],
     )
@@ -1112,16 +1333,19 @@ extra_args = []
 harness = "codex"
 model = "gpt-5.3-codex"
 thinking = "xhigh"
+launch_args = ["--yolo"]
 
 [roles.reviewer_1]
 harness = "codex"
 model = "gpt-5.3-codex"
 thinking = "xhigh"
+launch_args = ["--yolo"]
 
 [roles.reviewer_2]
 harness = "claude"
 model = "claude-opus-4-6"
 thinking = "xhigh"
+launch_args = ["--dangerously-skip-permissions"]
 
 [[tasks]]
 id = "call-audio"
@@ -1195,6 +1419,10 @@ fn main() -> Result<()> {
                 }
             }
             CtlCommand::Note { state_dir, message } => ctl_note(&state_dir, &message),
+        },
+        Commands::Teams(args) => match args.command {
+            TeamsCommand::List { dir } => cmd_teams_list(&dir),
+            TeamsCommand::Validate(validate) => cmd_teams_validate(&validate),
         },
     }
 }

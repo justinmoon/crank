@@ -11,6 +11,9 @@ It runs a single orchestrator loop, persists state to disk, and keeps going unti
 - `cargo run -- ctl snapshot --state-dir <dir>`
 - `cargo run -- ctl can-exit --state-dir <dir>`
 - `cargo run -- ctl note --state-dir <dir> --message "..."`
+- `cargo run -- teams list [--dir teams]`
+- `cargo run -- teams validate --team <name>`
+- `cargo run -- teams validate --all`
 
 ## Config Highlights
 
@@ -25,7 +28,13 @@ Top-level fields:
 - `[recovery] max_recovery_attempts_per_task, max_failures_before_block, backoff_initial_secs, backoff_max_secs`
 - `[backend]` (`kind = "codex"` or `"mock"`)
 - `[roles.implementer|reviewer_1|reviewer_2]` with `harness/model/thinking`
+  - each role also supports `launch_args = ["..."]`
 - `[[tasks]]` with `id`, `todo_file`, `depends_on`, optional `coord_dir`, optional `completion_file`
+
+Role launch-arg policy is enforced by validation:
+
+- `harness = "codex"` must include `launch_args = ["--yolo", ...]`
+- `harness = "claude"` must include `launch_args = ["--dangerously-skip-permissions", ...]`
 
 Task completion defaults to: `<coord_dir>/state.md` equals `done`.
 
@@ -47,6 +56,15 @@ This example validates dependency ordering across 4 tasks and the completion gat
 
 Prompt text is stored in `prompts/*.md` and embedded into the binary via `include_str!`.
 This keeps prompt editing readable and allows simple `{{placeholder}}` templating in Rust.
+
+## Teams
+
+Store reusable team definitions in `teams/*.toml`, then use:
+
+```bash
+cargo run -- teams list
+cargo run -- teams validate --team xhigh
+```
 
 ## Nix / Flake
 

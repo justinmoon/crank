@@ -15,6 +15,8 @@ Agent Quickstart:
 Run from source:
   cargo run -- --help
   cargo run -- run --config /tmp/crank.toml
+  cargo run -- teams list
+  cargo run -- teams validate --team xhigh
 
 Quality loop:
   - Execute the plan step-by-step.
