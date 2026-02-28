@@ -1,0 +1,56 @@
+workflow = "land"
+version = 1
+description = "Land changes via crank workflow"
+
+[vars]
+base = { default = "master" }
+worktree = { default = "." }
+timeout = { default = "600000" }
+notify_interval = { default = "60000" }
+skip_pre_merge_flag = { default = "" }
+skip_review_flag = { default = "" }
+review_skip_tests_flag = { default = "" }
+dry_run_flag = { default = "" }
+notify_flag = { default = "" }
+target_repo_flag = { default = "" }
+
+[[steps]]
+id = "preflight"
+title = "Preflight checks"
+run = "scripts/land/preflight.sh --worktree \"{{worktree}}\" --base {{base}}"
+
+[[steps]]
+id = "pre-merge"
+title = "Run pre-merge checks"
+run = "scripts/land/pre-merge.sh --worktree \"{{worktree}}\" --timeout {{timeout}} {{skip_pre_merge_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "review"
+title = "Run review"
+run = "scripts/land/review.sh --worktree \"{{worktree}}\" --timeout {{timeout}} {{review_skip_tests_flag}} {{skip_review_flag}}"
+needs = ["preflight"]
+
+[[steps]]
+id = "conflicts"
+title = "Check conflicts"
+run = "scripts/land/conflicts.sh --worktree \"{{worktree}}\" --base {{base}}"
+needs = ["pre-merge", "review"]
+
+[[steps]]
+id = "approval"
+title = "Wait for approval"
+run = "scripts/land/approval.sh --worktree \"{{worktree}}\" --base {{base}} {{notify_flag}} --notify-interval {{notify_interval}} {{target_repo_flag}}"
+needs = ["conflicts"]
+
+[[steps]]
+id = "land"
+title = "Land and push"
+run = "scripts/land/apply.sh --worktree \"{{worktree}}\" --base {{base}} {{dry_run_flag}} {{target_repo_flag}}"
+needs = ["approval"]
+
+[[steps]]
+id = "tutorial"
+title = "Generate tutorial"
+run = "scripts/land/tutorial.sh --worktree \"{{worktree}}\" --base {{base}} {{target_repo_flag}}"
+needs = ["land"]

@@ -1,0 +1,58 @@
+run_id = "pika-call-plans-20260227-234032"
+workspace = "/Users/justin/code/pika"
+state_dir = "/Users/justin/code/crank/runs/pika-call-plans-20260227-234032"
+unattended = true
+poll_interval_secs = 30
+
+[timeouts]
+stall_secs = 900
+
+[recovery]
+max_recovery_attempts_per_task = 4
+max_failures_before_block = 6
+backoff_initial_secs = 5
+backoff_max_secs = 120
+
+[backend]
+kind = "codex"
+binary = "codex"
+model = "gpt-5.3-codex"
+thinking = "xhigh"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+extra_args = []
+
+[roles.implementer]
+harness = "codex"
+model = "gpt-5.3-codex"
+thinking = "xhigh"
+
+[roles.reviewer_1]
+harness = "codex"
+model = "gpt-5.3-codex"
+thinking = "xhigh"
+
+[roles.reviewer_2]
+harness = "claude"
+model = "claude-opus-4-6"
+thinking = "xhigh"
+
+[[tasks]]
+id = "call-audio"
+todo_file = "/Users/justin/code/pika/todos/call-audio-plan.md"
+depends_on = []
+
+[[tasks]]
+id = "call-transport"
+todo_file = "/Users/justin/code/pika/todos/call-transport-plan.md"
+depends_on = ["call-audio"]
+
+[[tasks]]
+id = "call-video"
+todo_file = "/Users/justin/code/pika/todos/call-video-plan.md"
+depends_on = ["call-audio", "call-transport"]
+
+[[tasks]]
+id = "call-native-audio"
+todo_file = "/Users/justin/code/pika/todos/call-native-audio-plan.md"
+depends_on = ["call-audio", "call-transport", "call-video"]

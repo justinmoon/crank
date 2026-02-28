@@ -1,0 +1,53 @@
+run_id = "mock-call-plans"
+workspace = "examples/mock-project"
+state_dir = "runs/mock-call-plans"
+unattended = true
+poll_interval_secs = 1
+
+[timeouts]
+stall_secs = 30
+
+[recovery]
+max_recovery_attempts_per_task = 2
+max_failures_before_block = 3
+backoff_initial_secs = 1
+backoff_max_secs = 4
+
+[backend]
+kind = "mock"
+steps_per_task = 2
+
+[roles.implementer]
+harness = "codex"
+model = "gpt-5.3-codex"
+thinking = "xhigh"
+
+[roles.reviewer_1]
+harness = "codex"
+model = "gpt-5.3-codex"
+thinking = "xhigh"
+
+[roles.reviewer_2]
+harness = "claude"
+model = "claude-opus-4-6"
+thinking = "xhigh"
+
+[[tasks]]
+id = "call-audio"
+todo_file = "examples/mock-project/todos/call-audio-plan.md"
+depends_on = []
+
+[[tasks]]
+id = "call-transport"
+todo_file = "examples/mock-project/todos/call-transport-plan.md"
+depends_on = ["call-audio"]
+
+[[tasks]]
+id = "call-video"
+todo_file = "examples/mock-project/todos/call-video-plan.md"
+depends_on = ["call-audio", "call-transport"]
+
+[[tasks]]
+id = "call-native-audio"
+todo_file = "examples/mock-project/todos/call-native-audio-plan.md"
+depends_on = ["call-audio", "call-transport", "call-video"]
