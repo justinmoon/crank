@@ -40,6 +40,10 @@ Quality loop:
   - Execute the plan step-by-step.
   - Require review/checkpoint signal before advancing.
   - Fix serious workflow/reliability issues encountered during execution.
+
+Default role contract:
+  - Crank internally enforces implementer/reviewer todo workflow defaults.
+  - User prompts can stay short (e.g. \"implement <todo> with crank\").
 ";
 
 #[derive(Debug, Parser)]
@@ -670,9 +674,15 @@ fn build_prompt(
     out.push_str("\nRequired behavior:\n");
     out.push_str("1. Continue implementation for current task and keep momentum.\n");
     out.push_str("2. Use orchestrate-todo workflow against the task todo file and coord dir.\n");
-    out.push_str("3. Do not stop this run for user questions.\n");
+    out.push_str("3. Enforce these default role contracts without asking user to name skills:\n");
+    out.push_str("   - implementer contract: execute implement-todo semantics for the todo plan; post a checkpoint after every plan step; wait for reviewer decision; if rework is requested, fix and re-submit for the same step; do not batch multiple steps into one checkpoint.\n");
+    out.push_str("   - reviewer contract: execute review-todo semantics for each checkpoint; review against step acceptance criteria and changed files; return explicit verdicts (APPROVE / CHANGES_REQUESTED / BLOCKED / GIVE_UP) with concrete file-level feedback.\n");
     out.push_str(
-        "4. If blocked, log a blocker note in JOURNAL.md and continue with best-effort output.\n",
+        "4. Reviewer count default is 1 reviewer unless task/risk explicitly requires 2.\n",
+    );
+    out.push_str("5. Do not stop this run for user questions.\n");
+    out.push_str(
+        "6. If blocked, log a blocker note in JOURNAL.md and continue with best-effort output.\n",
     );
 
     if let Some(note) = recovery_note {
