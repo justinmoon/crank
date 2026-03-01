@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -131,6 +131,8 @@ struct Config {
     timeouts: TimeoutsConfig,
     #[serde(default)]
     recovery: RecoveryConfig,
+    #[serde(default)]
+    policy: PolicyConfig,
     backend: BackendConfig,
     roles: RolesConfig,
     tasks: Vec<TaskConfig>,
@@ -152,6 +154,42 @@ struct RecoveryConfig {
     backoff_initial_secs: u64,
     #[serde(default = "default_backoff_max_secs")]
     backoff_max_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PolicyConfig {
+    #[serde(default)]
+    unattended_escalate: UnattendedEscalatePolicy,
+}
+
+impl Default for PolicyConfig {
+    fn default() -> Self {
+        Self {
+            unattended_escalate: default_unattended_escalate_policy(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum UnattendedEscalatePolicy {
+    Strict,
+    BestEffortOnce,
+}
+
+impl Default for UnattendedEscalatePolicy {
+    fn default() -> Self {
+        default_unattended_escalate_policy()
+    }
+}
+
+impl UnattendedEscalatePolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::BestEffortOnce => "best_effort_once",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -293,8 +331,12 @@ struct TaskRuntime {
     completion_file: Option<String>,
     started_at: Option<String>,
     completed_at: Option<String>,
+    #[serde(default)]
+    blocked_reason: Option<String>,
     last_progress_epoch: Option<i64>,
     recovery_attempts: u32,
+    #[serde(default)]
+    unattended_escalate_retries: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,16 +378,36 @@ impl LockGuard {
     fn acquire(state_dir: &Path) -> Result<Self> {
         ensure_dir(state_dir)?;
         let lock_path = state_dir.join("run.lock");
-        let mut file = OpenOptions::new()
+        let mut file = match OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&lock_path)
-            .with_context(|| {
-                format!(
-                    "could not acquire lock {} (another crank run may be active)",
-                    lock_path.display()
-                )
-            })?;
+        {
+            Ok(file) => file,
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                if try_break_stale_lock(&lock_path)? {
+                    OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&lock_path)
+                        .with_context(|| {
+                            format!(
+                                "could not acquire lock {} after removing stale lock",
+                                lock_path.display()
+                            )
+                        })?
+                } else {
+                    return Err(anyhow!(
+                        "could not acquire lock {} (another crank run may be active)",
+                        lock_path.display()
+                    ));
+                }
+            }
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("could not acquire lock {}", lock_path.display()));
+            }
+        };
         writeln!(file, "pid={}", std::process::id())?;
         Ok(Self { lock_path })
     }
@@ -355,6 +417,41 @@ impl Drop for LockGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.lock_path);
     }
+}
+
+fn lock_pid(lock_path: &Path) -> Option<u32> {
+    let text = fs::read_to_string(lock_path).ok()?;
+    for line in text.lines() {
+        if let Some(raw) = line.strip_prefix("pid=") {
+            if let Ok(pid) = raw.trim().parse::<u32>() {
+                return Some(pid);
+            }
+        }
+    }
+    None
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn try_break_stale_lock(lock_path: &Path) -> Result<bool> {
+    let Some(pid) = lock_pid(lock_path) else {
+        return Ok(false);
+    };
+    if process_is_alive(pid) {
+        return Ok(false);
+    }
+    fs::remove_file(lock_path)
+        .with_context(|| format!("failed to remove stale lock {}", lock_path.display()))?;
+    Ok(true)
 }
 
 fn default_unattended() -> bool {
@@ -383,6 +480,10 @@ fn default_backoff_initial_secs() -> u64 {
 
 fn default_backoff_max_secs() -> u64 {
     120
+}
+
+fn default_unattended_escalate_policy() -> UnattendedEscalatePolicy {
+    UnattendedEscalatePolicy::BestEffortOnce
 }
 
 fn default_codex_binary() -> String {
@@ -485,6 +586,15 @@ fn turns_log_path(state_dir: &Path) -> PathBuf {
     state_dir.join("logs").join("orchestrator.turns.log")
 }
 
+fn ensure_log_files(state_dir: &Path) -> Result<()> {
+    for path in [events_log_path(state_dir), turns_log_path(state_dir)] {
+        if !path.exists() {
+            File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let tmp = path.with_extension("tmp");
     let bytes = serde_json::to_vec_pretty(value)?;
@@ -514,6 +624,53 @@ fn append_text(path: &Path, text: &str) -> Result<()> {
         .with_context(|| format!("failed to open {}", path.display()))?;
     file.write_all(text.as_bytes())?;
     Ok(())
+}
+
+const MAX_EVENT_OUTPUT_CHARS: usize = 1200;
+
+fn truncate_event_field(map: &mut serde_json::Map<String, Value>, key: &str, max_chars: usize) {
+    let Some(Value::String(s)) = map.get_mut(key) else {
+        return;
+    };
+    if s.chars().count() <= max_chars {
+        return;
+    }
+    let original_chars = s.chars().count();
+    let truncated: String = s.chars().take(max_chars).collect();
+    *s = format!(
+        "{truncated}\n...[truncated {} chars]",
+        original_chars.saturating_sub(max_chars)
+    );
+}
+
+fn sanitize_event_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for key in ["aggregated_output", "stdout", "stderr"] {
+                truncate_event_field(map, key, MAX_EVENT_OUTPUT_CHARS);
+            }
+            for nested in map.values_mut() {
+                sanitize_event_value(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                sanitize_event_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn append_event_line(path: &Path, raw_line: &str) -> Result<()> {
+    let rendered = match serde_json::from_str::<Value>(raw_line) {
+        Ok(mut value) => {
+            sanitize_event_value(&mut value);
+            serde_json::to_string(&value).unwrap_or_else(|_| raw_line.to_string())
+        }
+        Err(_) => raw_line.to_string(),
+    };
+    append_text(path, &format!("{rendered}\n"))
 }
 
 fn mtime_epoch(path: &Path) -> Option<i64> {
@@ -850,8 +1007,10 @@ fn init_state(cfg: &Config) -> Result<RunState> {
             completion_file: completion_file.as_ref().map(|p| p.display().to_string()),
             started_at: None,
             completed_at: None,
+            blocked_reason: None,
             last_progress_epoch: None,
             recovery_attempts: 0,
+            unattended_escalate_retries: 0,
         });
     }
 
@@ -932,6 +1091,7 @@ fn sync_completion_and_progress(state: &mut RunState) {
             if task.completed_at.is_none() {
                 task.completed_at = Some(now_iso());
             }
+            task.blocked_reason = None;
             task.last_progress_epoch = Some(now_epoch());
         }
     }
@@ -939,6 +1099,7 @@ fn sync_completion_and_progress(state: &mut RunState) {
 
 fn mark_task_started(task: &mut TaskRuntime) -> Result<()> {
     task.status = TaskStatus::Running;
+    task.blocked_reason = None;
     if task.started_at.is_none() {
         task.started_at = Some(now_iso());
     }
@@ -948,9 +1109,10 @@ fn mark_task_started(task: &mut TaskRuntime) -> Result<()> {
     Ok(())
 }
 
-fn mark_task_blocked(task: &mut TaskRuntime) {
+fn mark_task_blocked(task: &mut TaskRuntime, reason: &str) {
     task.status = TaskStatus::BlockedBestEffort;
     task.completed_at = Some(now_iso());
+    task.blocked_reason = Some(reason.to_string());
     task.last_progress_epoch = Some(now_epoch());
 }
 
@@ -965,6 +1127,142 @@ fn status_table(state: &RunState) -> String {
         ));
     }
     lines.join("\n")
+}
+
+fn configured_reviewer_quorum(roles: &RolesConfig) -> u32 {
+    let mut count = 0u32;
+    if !roles.reviewer_1.harness.trim().is_empty() {
+        count = count.saturating_add(1);
+    }
+    if !roles.reviewer_2.harness.trim().is_empty() {
+        count = count.saturating_add(1);
+    }
+    count.max(1)
+}
+
+fn coord_reviewer_count(coord_dir: &Path) -> Option<u32> {
+    let meta_path = coord_dir.join("meta.env");
+    let text = fs::read_to_string(meta_path).ok()?;
+    for line in text.lines() {
+        if let Some(raw) = line.strip_prefix("REVIEWER_COUNT=") {
+            let cleaned = raw.trim().trim_matches('\'').trim_matches('"');
+            if let Ok(value) = cleaned.parse::<u32>() {
+                return Some(value);
+            }
+            let digits: String = cleaned.chars().filter(|c| c.is_ascii_digit()).collect();
+            if let Ok(value) = digits.parse::<u32>() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn run_summary_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("run-summary.json")
+}
+
+#[derive(Serialize)]
+struct RunSummary {
+    run_id: String,
+    status: RunStatus,
+    cycle: u64,
+    started_at: String,
+    finished_at: String,
+    thread_id: Option<String>,
+    unattended: bool,
+    unattended_escalate_policy: String,
+    tasks_total: usize,
+    tasks_completed: usize,
+    tasks_blocked: usize,
+    blocked_tasks: Vec<BlockedTaskSummary>,
+}
+
+#[derive(Serialize)]
+struct BlockedTaskSummary {
+    id: String,
+    reason: Option<String>,
+}
+
+fn write_run_summary(state: &RunState, cfg: &Config) -> Result<()> {
+    let mut tasks_completed = 0usize;
+    let mut tasks_blocked = 0usize;
+    let mut blocked_tasks = Vec::new();
+
+    for task in &state.tasks {
+        match task.status {
+            TaskStatus::Completed => tasks_completed = tasks_completed.saturating_add(1),
+            TaskStatus::BlockedBestEffort => {
+                tasks_blocked = tasks_blocked.saturating_add(1);
+                blocked_tasks.push(BlockedTaskSummary {
+                    id: task.id.clone(),
+                    reason: task.blocked_reason.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let summary = RunSummary {
+        run_id: state.run_id.clone(),
+        status: state.status.clone(),
+        cycle: state.cycle,
+        started_at: state.started_at.clone(),
+        finished_at: state.updated_at.clone(),
+        thread_id: state.thread_id.clone(),
+        unattended: state.unattended,
+        unattended_escalate_policy: cfg.policy.unattended_escalate.as_str().to_string(),
+        tasks_total: state.tasks.len(),
+        tasks_completed,
+        tasks_blocked,
+        blocked_tasks,
+    };
+
+    write_json_atomic(&run_summary_path(&cfg.state_dir), &summary)
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum EscalateHandling {
+    Ignore,
+    Retry,
+    Block,
+}
+
+fn decide_unattended_escalate(
+    unattended: bool,
+    policy: UnattendedEscalatePolicy,
+    task: &mut TaskRuntime,
+    control_status: Option<&str>,
+    next_action: Option<&str>,
+) -> EscalateHandling {
+    if !unattended {
+        return EscalateHandling::Ignore;
+    }
+    let action_escalate = next_action
+        .map(|v| v.eq_ignore_ascii_case("ESCALATE"))
+        .unwrap_or(false);
+    let status_escalate = control_status
+        .map(|v| {
+            let s = v.trim();
+            s.eq_ignore_ascii_case("blocked") || s.eq_ignore_ascii_case("blocked_best_effort")
+        })
+        .unwrap_or(false);
+    let should_escalate = action_escalate || status_escalate;
+    if !should_escalate {
+        return EscalateHandling::Ignore;
+    }
+
+    match policy {
+        UnattendedEscalatePolicy::Strict => EscalateHandling::Block,
+        UnattendedEscalatePolicy::BestEffortOnce => {
+            if task.unattended_escalate_retries == 0 {
+                task.unattended_escalate_retries = 1;
+                EscalateHandling::Retry
+            } else {
+                EscalateHandling::Block
+            }
+        }
+    }
 }
 
 fn unresolved_placeholders(input: &str) -> Vec<String> {
@@ -1011,6 +1309,7 @@ fn build_prompt(
     task: &TaskRuntime,
     recovery_note: Option<&str>,
 ) -> Result<String> {
+    let reviewer_quorum = configured_reviewer_quorum(&cfg.roles);
     let completion_line = if let Some(completion_file) = &task.completion_file {
         format!("- completion_file: {completion_file}")
     } else {
@@ -1064,6 +1363,11 @@ fn build_prompt(
                 "reviewer_2_args",
                 role_launch_args_display(&cfg.roles.reviewer_2),
             ),
+            ("reviewer_quorum", reviewer_quorum.to_string()),
+            (
+                "unattended_escalate_policy",
+                cfg.policy.unattended_escalate.as_str().to_string(),
+            ),
             ("recovery_block", recovery_block),
         ],
     )
@@ -1094,11 +1398,15 @@ fn extract_control_block(text: &str) -> Option<ControlBlock> {
     None
 }
 
-fn run_backend_command(
+fn run_backend_command_streaming<F>(
     mut cmd: Command,
     prompt: &str,
     backend_name: &str,
-) -> Result<(String, String)> {
+    mut on_stdout_line: F,
+) -> Result<()>
+where
+    F: FnMut(&str) -> Result<()>,
+{
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1112,27 +1420,65 @@ fn run_backend_command(
             .stdin
             .take()
             .ok_or_else(|| anyhow!("failed to open {backend_name} stdin"))?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .with_context(|| format!("failed to write prompt to {backend_name}"))?;
+        if !prompt.is_empty() {
+            stdin
+                .write_all(prompt.as_bytes())
+                .with_context(|| format!("failed to write prompt to {backend_name}"))?;
+            if !prompt.ends_with('\n') {
+                stdin
+                    .write_all(b"\n")
+                    .with_context(|| format!("failed to finalize prompt for {backend_name}"))?;
+            }
+        }
     }
 
-    let output = child
-        .wait_with_output()
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("failed to open {backend_name} stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("failed to open {backend_name} stderr"))?;
+
+    let stderr_handle = thread::spawn(move || {
+        let mut stderr_text = String::new();
+        let mut reader = BufReader::new(stderr);
+        let _ = reader.read_to_string(&mut stderr_text);
+        stderr_text
+    });
+
+    let mut stdout_reader = BufReader::new(stdout);
+    let mut line_buf = String::new();
+    loop {
+        line_buf.clear();
+        let n = stdout_reader
+            .read_line(&mut line_buf)
+            .with_context(|| format!("failed reading {backend_name} stdout"))?;
+        if n == 0 {
+            break;
+        }
+        let line_trim = line_buf.trim();
+        if line_trim.is_empty() {
+            continue;
+        }
+        on_stdout_line(line_trim)?;
+    }
+
+    let status = child
+        .wait()
         .with_context(|| format!("failed waiting for {backend_name} process"))?;
+    let stderr_text = stderr_handle.join().unwrap_or_default();
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
+    if !status.success() {
         return Err(anyhow!(
             "{backend_name} turn failed with status {}\nstderr:\n{}",
-            output.status,
-            stderr
+            status,
+            stderr_text
         ));
     }
 
-    Ok((stdout, stderr))
+    Ok(())
 }
 
 fn parse_assistant_text_from_content(content: &Value) -> Option<String> {
@@ -1153,6 +1499,7 @@ fn run_turn_codex(
     backend: &CodexBackendConfig,
     state: &RunState,
     prompt: &str,
+    on_activity: &mut dyn FnMut() -> Result<()>,
 ) -> Result<TurnResult> {
     let mut cmd = Command::new(&backend.binary);
     cmd.current_dir(&cfg.workspace);
@@ -1177,20 +1524,12 @@ fn run_turn_codex(
         cmd.arg("resume").arg(thread_id);
     }
 
-    let (stdout, _stderr) = run_backend_command(cmd, prompt, "codex")?;
-
     let events_path = events_log_path(&cfg.state_dir);
     let mut parsed_thread_id: Option<String> = None;
     let mut final_response = String::new();
 
-    for line in stdout.lines() {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-
-        append_text(&events_path, &format!("{line_trim}\n"))?;
-
+    run_backend_command_streaming(cmd, prompt, "codex", |line_trim| {
+        append_event_line(&events_path, line_trim)?;
         if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
             if value.get("type").and_then(|v| v.as_str()) == Some("thread.started") {
                 if let Some(id) = value.get("thread_id").and_then(|v| v.as_str()) {
@@ -1208,7 +1547,9 @@ fn run_turn_codex(
                 }
             }
         }
-    }
+        on_activity()?;
+        Ok(())
+    })?;
 
     if final_response.is_empty() {
         final_response = "(no agent message captured)".to_string();
@@ -1225,6 +1566,7 @@ fn run_turn_claude(
     backend: &ClaudeBackendConfig,
     state: &RunState,
     prompt: &str,
+    on_activity: &mut dyn FnMut() -> Result<()>,
 ) -> Result<TurnResult> {
     let effort = match backend.thinking.as_str() {
         "xhigh" => "high",
@@ -1257,19 +1599,12 @@ fn run_turn_claude(
         cmd.arg("--resume").arg(session_id);
     }
 
-    let (stdout, _stderr) = run_backend_command(cmd, prompt, "claude")?;
-
     let events_path = events_log_path(&cfg.state_dir);
     let mut parsed_thread_id: Option<String> = None;
     let mut final_response = String::new();
 
-    for line in stdout.lines() {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-        append_text(&events_path, &format!("{line_trim}\n"))?;
-
+    run_backend_command_streaming(cmd, prompt, "claude", |line_trim| {
+        append_event_line(&events_path, line_trim)?;
         if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
             if let Some(id) = value.get("session_id").and_then(|v| v.as_str()) {
                 parsed_thread_id = Some(id.to_string());
@@ -1293,7 +1628,9 @@ fn run_turn_claude(
                 _ => {}
             }
         }
-    }
+        on_activity()?;
+        Ok(())
+    })?;
 
     if final_response.is_empty() {
         final_response = "(no agent message captured)".to_string();
@@ -1310,6 +1647,7 @@ fn run_turn_droid(
     backend: &DroidBackendConfig,
     state: &RunState,
     prompt: &str,
+    on_activity: &mut dyn FnMut() -> Result<()>,
 ) -> Result<TurnResult> {
     let effort = match backend.thinking.as_str() {
         "xhigh" => "max",
@@ -1340,19 +1678,12 @@ fn run_turn_droid(
         cmd.arg("--session-id").arg(session_id);
     }
 
-    let (stdout, _stderr) = run_backend_command(cmd, prompt, "droid")?;
-
     let events_path = events_log_path(&cfg.state_dir);
     let mut parsed_thread_id: Option<String> = None;
     let mut final_response = String::new();
 
-    for line in stdout.lines() {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-        append_text(&events_path, &format!("{line_trim}\n"))?;
-
+    run_backend_command_streaming(cmd, prompt, "droid", |line_trim| {
+        append_event_line(&events_path, line_trim)?;
         if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
             if let Some(id) = value.get("session_id").and_then(|v| v.as_str()) {
                 parsed_thread_id = Some(id.to_string());
@@ -1379,7 +1710,9 @@ fn run_turn_droid(
                 _ => {}
             }
         }
-    }
+        on_activity()?;
+        Ok(())
+    })?;
 
     if final_response.is_empty() {
         final_response = "(no agent message captured)".to_string();
@@ -1396,6 +1729,7 @@ fn run_turn_pi(
     backend: &PiBackendConfig,
     state: &RunState,
     prompt: &str,
+    on_activity: &mut dyn FnMut() -> Result<()>,
 ) -> Result<TurnResult> {
     let mut cmd = Command::new(&backend.binary);
     cmd.current_dir(&cfg.workspace);
@@ -1426,19 +1760,12 @@ fn run_turn_pi(
         cmd.arg(extra);
     }
 
-    let (stdout, _stderr) = run_backend_command(cmd, "", "pi")?;
-
     let events_path = events_log_path(&cfg.state_dir);
     let mut parsed_thread_id: Option<String> = None;
     let mut final_response = String::new();
 
-    for line in stdout.lines() {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-        append_text(&events_path, &format!("{line_trim}\n"))?;
-
+    run_backend_command_streaming(cmd, "", "pi", |line_trim| {
+        append_event_line(&events_path, line_trim)?;
         if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
             if value.get("type").and_then(|v| v.as_str()) == Some("session") {
                 if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
@@ -1458,7 +1785,9 @@ fn run_turn_pi(
                 }
             }
         }
-    }
+        on_activity()?;
+        Ok(())
+    })?;
 
     if final_response.is_empty() {
         final_response = "(no agent message captured)".to_string();
@@ -1470,7 +1799,11 @@ fn run_turn_pi(
     })
 }
 
-fn run_turn_mock(task: &TaskRuntime, backend: &MockBackendConfig) -> Result<TurnResult> {
+fn run_turn_mock(
+    task: &TaskRuntime,
+    backend: &MockBackendConfig,
+    on_activity: &mut dyn FnMut() -> Result<()>,
+) -> Result<TurnResult> {
     let coord = Path::new(&task.coord_dir);
     ensure_dir(coord)?;
     ensure_dir(&coord.join("heartbeats"))?;
@@ -1486,6 +1819,7 @@ fn run_turn_mock(task: &TaskRuntime, backend: &MockBackendConfig) -> Result<Turn
         coord.join("heartbeats").join("implementer.epoch"),
         format!("{}\n", now_epoch()),
     )?;
+    on_activity()?;
 
     let done = turns >= backend.steps_per_task.max(1);
     let state_text = if done { "done\n" } else { "active\n" };
@@ -1508,13 +1842,14 @@ fn run_turn(
     state: &RunState,
     task: &TaskRuntime,
     prompt: &str,
+    on_activity: &mut dyn FnMut() -> Result<()>,
 ) -> Result<TurnResult> {
     match &cfg.backend {
-        BackendConfig::Codex(codex) => run_turn_codex(cfg, codex, state, prompt),
-        BackendConfig::Claude(claude) => run_turn_claude(cfg, claude, state, prompt),
-        BackendConfig::Droid(droid) => run_turn_droid(cfg, droid, state, prompt),
-        BackendConfig::Pi(pi) => run_turn_pi(cfg, pi, state, prompt),
-        BackendConfig::Mock(mock) => run_turn_mock(task, mock),
+        BackendConfig::Codex(codex) => run_turn_codex(cfg, codex, state, prompt, on_activity),
+        BackendConfig::Claude(claude) => run_turn_claude(cfg, claude, state, prompt, on_activity),
+        BackendConfig::Droid(droid) => run_turn_droid(cfg, droid, state, prompt, on_activity),
+        BackendConfig::Pi(pi) => run_turn_pi(cfg, pi, state, prompt, on_activity),
+        BackendConfig::Mock(mock) => run_turn_mock(task, mock, on_activity),
     }
 }
 
@@ -1545,6 +1880,7 @@ fn compute_backoff_secs(recovery: &RecoveryConfig, failures: u32) -> u64 {
 fn run_governor(cfg: Config) -> Result<()> {
     ensure_dir(&cfg.state_dir)?;
     ensure_dir(&cfg.state_dir.join("logs"))?;
+    ensure_log_files(&cfg.state_dir)?;
     ensure_dir(&cfg.state_dir.join("coord"))?;
 
     let _lock = LockGuard::acquire(&cfg.state_dir)?;
@@ -1572,6 +1908,7 @@ fn run_governor(cfg: Config) -> Result<()> {
     }
 
     let mut consecutive_failures = 0u32;
+    let expected_reviewer_quorum = configured_reviewer_quorum(&cfg.roles);
     save_state(&mut state, &cfg.state_dir)?;
 
     loop {
@@ -1580,6 +1917,7 @@ fn run_governor(cfg: Config) -> Result<()> {
         if all_terminal(&state) {
             state.status = RunStatus::Completed;
             save_state(&mut state, &cfg.state_dir)?;
+            write_run_summary(&state, &cfg)?;
             append_journal(
                 &journal,
                 "run completed",
@@ -1609,6 +1947,7 @@ fn run_governor(cfg: Config) -> Result<()> {
             } else {
                 state.status = RunStatus::FailedTerminal;
                 save_state(&mut state, &cfg.state_dir)?;
+                write_run_summary(&state, &cfg)?;
                 append_journal(
                     &journal,
                     "deadlock",
@@ -1619,6 +1958,20 @@ fn run_governor(cfg: Config) -> Result<()> {
         }
 
         let idx = active_idx.expect("active index must be set");
+        if let Some(actual) = coord_reviewer_count(Path::new(&state.tasks[idx].coord_dir)) {
+            if actual != expected_reviewer_quorum {
+                let reason = format!(
+                    "reviewer quorum mismatch: expected {} from configured team roles, but coord meta.env has REVIEWER_COUNT={}",
+                    expected_reviewer_quorum, actual
+                );
+                append_journal(&journal, "task blocked reviewer quorum", &reason)?;
+                let task = &mut state.tasks[idx];
+                mark_task_blocked(task, &reason);
+                save_state(&mut state, &cfg.state_dir)?;
+                thread::sleep(Duration::from_secs(cfg.poll_interval_secs.max(1)));
+                continue;
+            }
+        }
 
         let now = now_epoch();
         let mut recovery_note: Option<String> = None;
@@ -1632,7 +1985,9 @@ fn run_governor(cfg: Config) -> Result<()> {
                 let age = now.saturating_sub(last);
                 if age > cfg.timeouts.stall_secs as i64 {
                     if task.recovery_attempts >= cfg.recovery.max_recovery_attempts_per_task {
-                        mark_task_blocked(task);
+                        let reason =
+                            format!("exceeded recovery attempts after {}s without progress", age);
+                        mark_task_blocked(task, &reason);
                         append_journal(
                             &journal,
                             "task blocked best-effort",
@@ -1659,11 +2014,34 @@ fn run_governor(cfg: Config) -> Result<()> {
         }
 
         let task_snapshot = state.tasks[idx].clone();
+        let state_snapshot = state.clone();
         let prompt = build_prompt(&cfg, &state, &task_snapshot, recovery_note.as_deref())?;
 
         state.cycle = state.cycle.saturating_add(1);
+        state.last_turn_at = Some(now_iso());
+        save_state(&mut state, &cfg.state_dir)?;
 
-        let turn = run_turn(&cfg, &state, &task_snapshot, &prompt);
+        let mut last_activity_state_save_epoch = 0i64;
+        let mut on_activity = || -> Result<()> {
+            let now = now_epoch();
+            if let Some(task) = state.tasks.get_mut(idx) {
+                task.last_progress_epoch = Some(now);
+            }
+            state.last_turn_at = Some(now_iso());
+            if now.saturating_sub(last_activity_state_save_epoch) >= 5 {
+                save_state(&mut state, &cfg.state_dir)?;
+                last_activity_state_save_epoch = now;
+            }
+            Ok(())
+        };
+
+        let turn = run_turn(
+            &cfg,
+            &state_snapshot,
+            &task_snapshot,
+            &prompt,
+            &mut on_activity,
+        );
         match turn {
             Ok(turn_result) => {
                 consecutive_failures = 0;
@@ -1678,8 +2056,10 @@ fn run_governor(cfg: Config) -> Result<()> {
                     &turn_result.final_response,
                 )?;
 
+                let mut escalated_block_reason: Option<String> = None;
                 if let Some(control) = extract_control_block(&turn_result.final_response) {
-                    let control_status = control.status.as_deref().unwrap_or("(missing)");
+                    let control_status_raw = control.status.clone();
+                    let control_status = control_status_raw.as_deref().unwrap_or("(missing)");
                     let summary = control.summary.unwrap_or_default();
                     let next_action = control.next_action.unwrap_or_default();
                     append_journal(
@@ -1703,6 +2083,36 @@ fn run_governor(cfg: Config) -> Result<()> {
                             "Orchestrator indicated user input was needed. Governor will continue with best-effort without user interaction.",
                         )?;
                     }
+
+                    let handling = {
+                        let task = &mut state.tasks[idx];
+                        decide_unattended_escalate(
+                            cfg.unattended,
+                            cfg.policy.unattended_escalate,
+                            task,
+                            control_status_raw.as_deref(),
+                            Some(&next_action),
+                        )
+                    };
+                    match handling {
+                        EscalateHandling::Ignore => {}
+                        EscalateHandling::Retry => {
+                            append_journal(
+                                &journal,
+                                "unattended escalate retry",
+                                &format!(
+                                    "Task {} requested ESCALATE. Applying best_effort_once retry path (attempt {}).",
+                                    task_snapshot.id, state.tasks[idx].unattended_escalate_retries
+                                ),
+                            )?;
+                        }
+                        EscalateHandling::Block => {
+                            escalated_block_reason = Some(format!(
+                                "orchestrator requested ESCALATE in unattended mode (policy={})",
+                                cfg.policy.unattended_escalate.as_str()
+                            ));
+                        }
+                    }
                 } else {
                     append_journal(
                         &journal,
@@ -1712,6 +2122,13 @@ fn run_governor(cfg: Config) -> Result<()> {
                 }
 
                 sync_completion_and_progress(&mut state);
+                if let Some(reason) = escalated_block_reason {
+                    let task = &mut state.tasks[idx];
+                    if task.status != TaskStatus::Completed {
+                        mark_task_blocked(task, &reason);
+                        append_journal(&journal, "task blocked escalate policy", &reason)?;
+                    }
+                }
                 save_state(&mut state, &cfg.state_dir)?;
                 thread::sleep(Duration::from_secs(cfg.poll_interval_secs.max(1)));
             }
@@ -1728,7 +2145,8 @@ fn run_governor(cfg: Config) -> Result<()> {
 
                 if consecutive_failures >= cfg.recovery.max_failures_before_block {
                     let task = &mut state.tasks[idx];
-                    mark_task_blocked(task);
+                    let reason = format!("hit {} consecutive turn failures", consecutive_failures);
+                    mark_task_blocked(task, &reason);
                     append_journal(
                         &journal,
                         "task blocked after repeated failures",
@@ -1790,6 +2208,9 @@ max_recovery_attempts_per_task = 4
 max_failures_before_block = 6
 backoff_initial_secs = 5
 backoff_max_secs = 120
+
+[policy]
+unattended_escalate = "best_effort_once"
 
 [backend]
 kind = "codex"
@@ -1979,6 +2400,174 @@ mod tests {
         validate_roles(&team.roles).expect("xhigh roles must validate");
     }
 
+    #[test]
+    fn lock_guard_breaks_stale_lock() {
+        let state_dir = make_temp_dir("lock-stale");
+        let lock_path = state_dir.join("run.lock");
+        fs::write(&lock_path, "pid=999999\n").expect("write stale lock");
+
+        let guard = LockGuard::acquire(&state_dir).expect("should recover stale lock");
+        let lock_text = fs::read_to_string(&lock_path).expect("read recovered lock");
+        assert!(lock_text.contains("pid="));
+        drop(guard);
+        assert!(!lock_path.exists(), "lock should be removed on drop");
+    }
+
+    #[test]
+    fn lock_guard_keeps_live_lock() {
+        let state_dir = make_temp_dir("lock-live");
+        let lock_path = state_dir.join("run.lock");
+        fs::write(&lock_path, format!("pid={}\n", std::process::id())).expect("write live lock");
+
+        match LockGuard::acquire(&state_dir) {
+            Ok(_guard) => panic!("live lock should fail acquire"),
+            Err(err) => assert!(err.to_string().contains("could not acquire lock")),
+        }
+    }
+
+    #[test]
+    fn reviewer_quorum_derived_from_roles() {
+        let roles = default_roles();
+        assert_eq!(configured_reviewer_quorum(&roles), 2);
+    }
+
+    #[test]
+    fn coord_reviewer_count_parses_meta_env() {
+        let coord_dir = make_temp_dir("coord-meta");
+        fs::write(coord_dir.join("meta.env"), "REVIEWER_COUNT=2\n").expect("write meta.env");
+        assert_eq!(coord_reviewer_count(&coord_dir), Some(2));
+    }
+
+    #[test]
+    fn escalate_policy_strict_blocks_immediately() {
+        let mut task = TaskRuntime {
+            id: "t1".to_string(),
+            todo_file: "todo.md".to_string(),
+            depends_on: Vec::new(),
+            status: TaskStatus::Running,
+            coord_dir: "/tmp/coord".to_string(),
+            completion_file: None,
+            started_at: None,
+            completed_at: None,
+            blocked_reason: None,
+            last_progress_epoch: None,
+            recovery_attempts: 0,
+            unattended_escalate_retries: 0,
+        };
+
+        let decision = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::Strict,
+            &mut task,
+            None,
+            Some("ESCALATE"),
+        );
+        assert_eq!(decision, EscalateHandling::Block);
+        assert_eq!(task.unattended_escalate_retries, 0);
+    }
+
+    #[test]
+    fn escalate_policy_best_effort_once_then_blocks() {
+        let mut task = TaskRuntime {
+            id: "t2".to_string(),
+            todo_file: "todo.md".to_string(),
+            depends_on: Vec::new(),
+            status: TaskStatus::Running,
+            coord_dir: "/tmp/coord".to_string(),
+            completion_file: None,
+            started_at: None,
+            completed_at: None,
+            blocked_reason: None,
+            last_progress_epoch: None,
+            recovery_attempts: 0,
+            unattended_escalate_retries: 0,
+        };
+
+        let first = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::BestEffortOnce,
+            &mut task,
+            None,
+            Some("ESCALATE"),
+        );
+        assert_eq!(first, EscalateHandling::Retry);
+        assert_eq!(task.unattended_escalate_retries, 1);
+
+        let second = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::BestEffortOnce,
+            &mut task,
+            None,
+            Some("ESCALATE"),
+        );
+        assert_eq!(second, EscalateHandling::Block);
+    }
+
+    #[test]
+    fn escalate_policy_best_effort_once_uses_blocked_status() {
+        let mut task = TaskRuntime {
+            id: "t3".to_string(),
+            todo_file: "todo.md".to_string(),
+            depends_on: Vec::new(),
+            status: TaskStatus::Running,
+            coord_dir: "/tmp/coord".to_string(),
+            completion_file: None,
+            started_at: None,
+            completed_at: None,
+            blocked_reason: None,
+            last_progress_epoch: None,
+            recovery_attempts: 0,
+            unattended_escalate_retries: 0,
+        };
+
+        let first = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::BestEffortOnce,
+            &mut task,
+            Some("blocked"),
+            Some("wait for user sign-off"),
+        );
+        assert_eq!(first, EscalateHandling::Retry);
+        assert_eq!(task.unattended_escalate_retries, 1);
+
+        let second = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::BestEffortOnce,
+            &mut task,
+            Some("blocked"),
+            Some("wait for user sign-off"),
+        );
+        assert_eq!(second, EscalateHandling::Block);
+    }
+
+    #[test]
+    fn non_escalate_control_is_ignored() {
+        let mut task = TaskRuntime {
+            id: "t4".to_string(),
+            todo_file: "todo.md".to_string(),
+            depends_on: Vec::new(),
+            status: TaskStatus::Running,
+            coord_dir: "/tmp/coord".to_string(),
+            completion_file: None,
+            started_at: None,
+            completed_at: None,
+            blocked_reason: None,
+            last_progress_epoch: None,
+            recovery_attempts: 0,
+            unattended_escalate_retries: 0,
+        };
+
+        let decision = decide_unattended_escalate(
+            true,
+            UnattendedEscalatePolicy::BestEffortOnce,
+            &mut task,
+            Some("in_progress"),
+            Some("continue"),
+        );
+        assert_eq!(decision, EscalateHandling::Ignore);
+        assert_eq!(task.unattended_escalate_retries, 0);
+    }
+
     fn make_temp_dir(prefix: &str) -> PathBuf {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2004,6 +2593,7 @@ mod tests {
             poll_interval_secs: 1,
             timeouts: TimeoutsConfig { stall_secs: 900 },
             recovery: RecoveryConfig::default(),
+            policy: PolicyConfig::default(),
             backend,
             roles: default_roles(),
             tasks: Vec::new(),
@@ -2033,15 +2623,19 @@ mod tests {
             completion_file: None,
             started_at: None,
             completed_at: None,
+            blocked_reason: None,
             last_progress_epoch: None,
             recovery_attempts: 0,
+            unattended_escalate_retries: 0,
         };
 
+        let mut on_activity = || -> Result<()> { Ok(()) };
         run_turn(
             &cfg,
             &state,
             &task,
             "Respond with a one-line greeting and include the token CRANK_LOCAL_SMOKE.",
+            &mut on_activity,
         )
     }
 

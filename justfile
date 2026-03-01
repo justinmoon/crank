@@ -26,6 +26,12 @@ teams-list:
 teams-validate team:
   cargo run -- teams validate --team {{team}}
 
+watch-run:
+  scripts/watch-run-logs.sh
+
+watch-run-id run:
+  scripts/watch-run-logs.sh "{{run}}"
+
 local-e2e:
   cargo test local_e2e_ -- --ignored --nocapture
 

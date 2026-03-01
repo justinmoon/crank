@@ -97,3 +97,17 @@ cargo test local_e2e_claude_backend_smoke -- --ignored --nocapture
 cargo test local_e2e_droid_backend_smoke -- --ignored --nocapture
 cargo test local_e2e_pi_backend_smoke -- --ignored --nocapture
 ```
+
+## Live Run Logs
+
+```bash
+# newest run under /tmp/crank-runs
+scripts/watch-run-logs.sh
+
+# specific run id
+scripts/watch-run-logs.sh pikahut-library-first-integration-tests
+
+# via just
+just watch-run
+just watch-run pikahut-library-first-integration-tests
+```
