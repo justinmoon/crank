@@ -1,0 +1,90 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: crank-nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-nix-v1-${{ runner.os }}
+          path: /nix
+      - name: Fix /nix ownership
+        run: |
+          if [ -d /nix ] && [ "$(stat -c %u /nix)" != "$(id -u)" ]; then
+            sudo chown -R "$(id -u):$(id -g)" /nix
+          fi
+      - uses: nixbuild/nix-quick-install-action@v30
+
+      - uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-home-v1-${{ runner.os }}
+          path: ~/.cargo
+      - uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-cargo-target-v1-${{ runner.os }}
+          path: target
+
+      - name: Nix checks
+        run: nix flake check
+
+      - name: Resume smoke (interrupted run)
+        run: |
+          set -euo pipefail
+
+          run_id="mock-resume-nightly-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          state_dir="runs/${run_id}"
+          cfg="${RUNNER_TEMP}/mock-run-resume.toml"
+
+          sed \
+            -e "s/^run_id = .*/run_id = \"${run_id}\"/" \
+            -e "s#^state_dir = .*#state_dir = \"${state_dir}\"#" \
+            -e "s/^poll_interval_secs = .*/poll_interval_secs = 1/" \
+            -e "s/^steps_per_task = .*/steps_per_task = 30/" \
+            examples/mock-run.toml > "${cfg}"
+
+          nix develop .#default -c cargo build
+
+          # Simulate a mid-run interruption.
+          nix develop .#default -c bash -lc '
+            set -euo pipefail
+            target/debug/crank run --config "'"${cfg}"'" &
+            pid=$!
+            sleep 3
+            kill -9 "$pid" || true
+            wait "$pid" || true
+          '
+
+          # Current governor leaves a lock file after hard interruption; clear stale lock and resume.
+          rm -f "${state_dir}/run.lock"
+
+          nix develop .#default -c cargo run -- run --config "${cfg}"
+          nix develop .#default -c cargo run -- ctl can-exit --state-dir "${state_dir}"
+          nix develop .#default -c cargo run -- ctl snapshot --state-dir "${state_dir}" > "${RUNNER_TEMP}/snapshot.json"
+
+          nix develop .#default -c jq -e '.status == "completed"' "${RUNNER_TEMP}/snapshot.json"
+          nix develop .#default -c jq -e '([.tasks[].status] | all(. == "completed" or . == "blocked_best_effort"))' "${RUNNER_TEMP}/snapshot.json"
+          grep -q "run resume" "${state_dir}/JOURNAL.md"
+
+      - name: Upload nightly run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-run-${{ github.run_id }}
+          path: |
+            runs/mock-resume-nightly-${{ github.run_id }}-${{ github.run_attempt }}/state.json
+            runs/mock-resume-nightly-${{ github.run_id }}-${{ github.run_attempt }}/JOURNAL.md
+            runs/mock-resume-nightly-${{ github.run_id }}-${{ github.run_attempt }}/logs/
+          if-no-files-found: warn
