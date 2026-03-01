@@ -158,6 +158,9 @@ struct RecoveryConfig {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum BackendConfig {
     Codex(CodexBackendConfig),
+    Claude(ClaudeBackendConfig),
+    Droid(DroidBackendConfig),
+    Pi(PiBackendConfig),
     Mock(MockBackendConfig),
 }
 
@@ -171,6 +174,40 @@ struct CodexBackendConfig {
     approval_policy: String,
     #[serde(default = "default_sandbox_mode")]
     sandbox_mode: String,
+    #[serde(default)]
+    extra_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ClaudeBackendConfig {
+    #[serde(default = "default_claude_binary")]
+    binary: String,
+    model: String,
+    thinking: String,
+    #[serde(default)]
+    extra_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DroidBackendConfig {
+    #[serde(default = "default_droid_binary")]
+    binary: String,
+    model: String,
+    thinking: String,
+    #[serde(default = "default_droid_autonomy")]
+    auto: String,
+    #[serde(default)]
+    extra_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PiBackendConfig {
+    #[serde(default = "default_pi_binary")]
+    binary: String,
+    model: String,
+    thinking: String,
+    #[serde(default)]
+    provider: Option<String>,
     #[serde(default)]
     extra_args: Vec<String>,
 }
@@ -358,6 +395,22 @@ fn default_approval_policy() -> String {
 
 fn default_sandbox_mode() -> String {
     "danger-full-access".to_string()
+}
+
+fn default_claude_binary() -> String {
+    "claude".to_string()
+}
+
+fn default_droid_binary() -> String {
+    "droid".to_string()
+}
+
+fn default_droid_autonomy() -> String {
+    "high".to_string()
+}
+
+fn default_pi_binary() -> String {
+    "pi".to_string()
 }
 
 fn default_mock_steps_per_task() -> u32 {
@@ -1041,6 +1094,60 @@ fn extract_control_block(text: &str) -> Option<ControlBlock> {
     None
 }
 
+fn run_backend_command(
+    mut cmd: Command,
+    prompt: &str,
+    backend_name: &str,
+) -> Result<(String, String)> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .with_context(|| format!("failed to spawn {backend_name} backend executable"))?;
+
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("failed to open {backend_name} stdin"))?;
+        stdin
+            .write_all(prompt.as_bytes())
+            .with_context(|| format!("failed to write prompt to {backend_name}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("failed waiting for {backend_name} process"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "{backend_name} turn failed with status {}\nstderr:\n{}",
+            output.status,
+            stderr
+        ));
+    }
+
+    Ok((stdout, stderr))
+}
+
+fn parse_assistant_text_from_content(content: &Value) -> Option<String> {
+    let blocks = content.as_array()?;
+    let mut text = String::new();
+    for block in blocks {
+        if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+            if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                text.push_str(t);
+            }
+        }
+    }
+    if text.is_empty() { None } else { Some(text) }
+}
+
 fn run_turn_codex(
     cfg: &Config,
     backend: &CodexBackendConfig,
@@ -1048,6 +1155,7 @@ fn run_turn_codex(
     prompt: &str,
 ) -> Result<TurnResult> {
     let mut cmd = Command::new(&backend.binary);
+    cmd.current_dir(&cfg.workspace);
     cmd.arg("exec")
         .arg("--experimental-json")
         .arg("--model")
@@ -1069,33 +1177,7 @@ fn run_turn_codex(
         cmd.arg("resume").arg(thread_id);
     }
 
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().with_context(|| {
-        format!(
-            "failed to spawn codex backend executable '{}'",
-            backend.binary
-        )
-    })?;
-
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("failed to open codex stdin"))?;
-        stdin
-            .write_all(prompt.as_bytes())
-            .context("failed to write prompt to codex")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("failed waiting for codex process")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let (stdout, _stderr) = run_backend_command(cmd, prompt, "codex")?;
 
     let events_path = events_log_path(&cfg.state_dir);
     let mut parsed_thread_id: Option<String> = None;
@@ -1107,7 +1189,7 @@ fn run_turn_codex(
             continue;
         }
 
-        append_text(&events_path, &format!("{}\n", line_trim))?;
+        append_text(&events_path, &format!("{line_trim}\n"))?;
 
         if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
             if value.get("type").and_then(|v| v.as_str()) == Some("thread.started") {
@@ -1128,12 +1210,89 @@ fn run_turn_codex(
         }
     }
 
-    if !output.status.success() {
-        return Err(anyhow!(
-            "codex turn failed with status {}\nstderr:\n{}",
-            output.status,
-            stderr
-        ));
+    if final_response.is_empty() {
+        final_response = "(no agent message captured)".to_string();
+    }
+
+    Ok(TurnResult {
+        thread_id: parsed_thread_id,
+        final_response,
+    })
+}
+
+fn run_turn_claude(
+    cfg: &Config,
+    backend: &ClaudeBackendConfig,
+    state: &RunState,
+    prompt: &str,
+) -> Result<TurnResult> {
+    let effort = match backend.thinking.as_str() {
+        "xhigh" => "high",
+        other => other,
+    };
+
+    let mut cmd = Command::new(&backend.binary);
+    cmd.current_dir(&cfg.workspace);
+    cmd.arg("-p")
+        .arg("--verbose")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--input-format")
+        .arg("text")
+        .arg("--model")
+        .arg(&backend.model)
+        .arg("--effort")
+        .arg(effort)
+        .arg("--dangerously-skip-permissions")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .arg("--add-dir")
+        .arg(&cfg.workspace);
+
+    for extra in &backend.extra_args {
+        cmd.arg(extra);
+    }
+
+    if let Some(session_id) = &state.thread_id {
+        cmd.arg("--resume").arg(session_id);
+    }
+
+    let (stdout, _stderr) = run_backend_command(cmd, prompt, "claude")?;
+
+    let events_path = events_log_path(&cfg.state_dir);
+    let mut parsed_thread_id: Option<String> = None;
+    let mut final_response = String::new();
+
+    for line in stdout.lines() {
+        let line_trim = line.trim();
+        if line_trim.is_empty() {
+            continue;
+        }
+        append_text(&events_path, &format!("{line_trim}\n"))?;
+
+        if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
+            if let Some(id) = value.get("session_id").and_then(|v| v.as_str()) {
+                parsed_thread_id = Some(id.to_string());
+            }
+
+            match value.get("type").and_then(|v| v.as_str()) {
+                Some("assistant") => {
+                    if let Some(msg) = value.get("message") {
+                        if let Some(content) = msg.get("content") {
+                            if let Some(text) = parse_assistant_text_from_content(content) {
+                                final_response = text;
+                            }
+                        }
+                    }
+                }
+                Some("result") => {
+                    if let Some(text) = value.get("result").and_then(|v| v.as_str()) {
+                        final_response = text.to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     if final_response.is_empty() {
@@ -1142,6 +1301,171 @@ fn run_turn_codex(
 
     Ok(TurnResult {
         thread_id: parsed_thread_id,
+        final_response,
+    })
+}
+
+fn run_turn_droid(
+    cfg: &Config,
+    backend: &DroidBackendConfig,
+    state: &RunState,
+    prompt: &str,
+) -> Result<TurnResult> {
+    let effort = match backend.thinking.as_str() {
+        "xhigh" => "max",
+        other => other,
+    };
+
+    let mut cmd = Command::new(&backend.binary);
+    cmd.current_dir(&cfg.workspace);
+    cmd.arg("exec")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--input-format")
+        .arg("text")
+        .arg("--model")
+        .arg(&backend.model)
+        .arg("--reasoning-effort")
+        .arg(effort)
+        .arg("--auto")
+        .arg(&backend.auto)
+        .arg("--cwd")
+        .arg(&cfg.workspace);
+
+    for extra in &backend.extra_args {
+        cmd.arg(extra);
+    }
+
+    if let Some(session_id) = &state.thread_id {
+        cmd.arg("--session-id").arg(session_id);
+    }
+
+    let (stdout, _stderr) = run_backend_command(cmd, prompt, "droid")?;
+
+    let events_path = events_log_path(&cfg.state_dir);
+    let mut parsed_thread_id: Option<String> = None;
+    let mut final_response = String::new();
+
+    for line in stdout.lines() {
+        let line_trim = line.trim();
+        if line_trim.is_empty() {
+            continue;
+        }
+        append_text(&events_path, &format!("{line_trim}\n"))?;
+
+        if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
+            if let Some(id) = value.get("session_id").and_then(|v| v.as_str()) {
+                parsed_thread_id = Some(id.to_string());
+            }
+
+            match value.get("type").and_then(|v| v.as_str()) {
+                Some("message") => {
+                    if value.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                        if let Some(text) = value.get("text").and_then(|v| v.as_str()) {
+                            final_response = text.to_string();
+                        }
+                    }
+                }
+                Some("completion") => {
+                    if let Some(text) = value.get("finalText").and_then(|v| v.as_str()) {
+                        final_response = text.to_string();
+                    }
+                }
+                Some("result") => {
+                    if let Some(text) = value.get("result").and_then(|v| v.as_str()) {
+                        final_response = text.to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if final_response.is_empty() {
+        final_response = "(no agent message captured)".to_string();
+    }
+
+    Ok(TurnResult {
+        thread_id: parsed_thread_id,
+        final_response,
+    })
+}
+
+fn run_turn_pi(
+    cfg: &Config,
+    backend: &PiBackendConfig,
+    state: &RunState,
+    prompt: &str,
+) -> Result<TurnResult> {
+    let mut cmd = Command::new(&backend.binary);
+    cmd.current_dir(&cfg.workspace);
+    cmd.arg("--print")
+        .arg("--mode")
+        .arg("json")
+        .arg("--model")
+        .arg(&backend.model)
+        .arg("--thinking")
+        .arg(&backend.thinking)
+        .arg("--session-dir")
+        .arg(cfg.state_dir.join("pi-sessions"))
+        .arg("--no-extensions")
+        .arg("--no-skills")
+        .arg("--no-prompt-templates")
+        .arg("--no-themes")
+        .arg(prompt);
+
+    if let Some(session_id) = &state.thread_id {
+        cmd.arg("--session").arg(session_id);
+    }
+
+    if let Some(provider) = &backend.provider {
+        cmd.arg("--provider").arg(provider);
+    }
+
+    for extra in &backend.extra_args {
+        cmd.arg(extra);
+    }
+
+    let (stdout, _stderr) = run_backend_command(cmd, "", "pi")?;
+
+    let events_path = events_log_path(&cfg.state_dir);
+    let mut parsed_thread_id: Option<String> = None;
+    let mut final_response = String::new();
+
+    for line in stdout.lines() {
+        let line_trim = line.trim();
+        if line_trim.is_empty() {
+            continue;
+        }
+        append_text(&events_path, &format!("{line_trim}\n"))?;
+
+        if let Ok(value) = serde_json::from_str::<Value>(line_trim) {
+            if value.get("type").and_then(|v| v.as_str()) == Some("session") {
+                if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                    parsed_thread_id = Some(id.to_string());
+                }
+            }
+
+            if value.get("type").and_then(|v| v.as_str()) == Some("message_end") {
+                if let Some(msg) = value.get("message") {
+                    if msg.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+                        if let Some(content) = msg.get("content") {
+                            if let Some(text) = parse_assistant_text_from_content(content) {
+                                final_response = text;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if final_response.is_empty() {
+        final_response = "(no agent message captured)".to_string();
+    }
+
+    Ok(TurnResult {
+        thread_id: parsed_thread_id.or_else(|| state.thread_id.clone()),
         final_response,
     })
 }
@@ -1187,6 +1511,9 @@ fn run_turn(
 ) -> Result<TurnResult> {
     match &cfg.backend {
         BackendConfig::Codex(codex) => run_turn_codex(cfg, codex, state, prompt),
+        BackendConfig::Claude(claude) => run_turn_claude(cfg, claude, state, prompt),
+        BackendConfig::Droid(droid) => run_turn_droid(cfg, droid, state, prompt),
+        BackendConfig::Pi(pi) => run_turn_pi(cfg, pi, state, prompt),
         BackendConfig::Mock(mock) => run_turn_mock(task, mock),
     }
 }
@@ -1615,6 +1942,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn render_template_replaces_placeholders() {
@@ -1648,5 +1977,112 @@ mod tests {
     fn builtin_team_xhigh_is_valid() {
         let team = builtin_team("xhigh").expect("xhigh should exist");
         validate_roles(&team.roles).expect("xhigh roles must validate");
+    }
+
+    fn make_temp_dir(prefix: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after epoch")
+            .as_millis();
+        let pid = std::process::id();
+        let dir = env::temp_dir().join(format!("crank-{prefix}-{pid}-{ts}"));
+        fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    fn local_smoke_run(backend: BackendConfig) -> Result<TurnResult> {
+        let state_dir = make_temp_dir("local-e2e");
+        let workspace = env::current_dir().context("failed to get current dir")?;
+        fs::create_dir_all(state_dir.join("logs")).context("failed to create logs dir")?;
+        fs::create_dir_all(state_dir.join("coord")).context("failed to create coord dir")?;
+
+        let cfg = Config {
+            run_id: Some("local-e2e".to_string()),
+            workspace: workspace.clone(),
+            state_dir: state_dir.clone(),
+            unattended: true,
+            poll_interval_secs: 1,
+            timeouts: TimeoutsConfig { stall_secs: 900 },
+            recovery: RecoveryConfig::default(),
+            backend,
+            roles: default_roles(),
+            tasks: Vec::new(),
+        };
+
+        let state = RunState {
+            run_id: "local-e2e".to_string(),
+            workspace: workspace.display().to_string(),
+            state_dir: state_dir.display().to_string(),
+            unattended: true,
+            status: RunStatus::Running,
+            started_at: now_iso(),
+            updated_at: now_iso(),
+            journal_path: journal_path(&state_dir).display().to_string(),
+            thread_id: None,
+            cycle: 0,
+            last_turn_at: None,
+            tasks: Vec::new(),
+        };
+
+        let task = TaskRuntime {
+            id: "smoke".to_string(),
+            todo_file: "N/A".to_string(),
+            depends_on: Vec::new(),
+            status: TaskStatus::Running,
+            coord_dir: state_dir.join("coord").join("smoke").display().to_string(),
+            completion_file: None,
+            started_at: None,
+            completed_at: None,
+            last_progress_epoch: None,
+            recovery_attempts: 0,
+        };
+
+        run_turn(
+            &cfg,
+            &state,
+            &task,
+            "Respond with a one-line greeting and include the token CRANK_LOCAL_SMOKE.",
+        )
+    }
+
+    #[test]
+    #[ignore = "local e2e; requires authenticated claude CLI"]
+    fn local_e2e_claude_backend_smoke() {
+        let result = local_smoke_run(BackendConfig::Claude(ClaudeBackendConfig {
+            binary: "claude".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            thinking: "high".to_string(),
+            extra_args: Vec::new(),
+        }))
+        .expect("claude local smoke should succeed");
+        assert!(!result.final_response.trim().is_empty());
+    }
+
+    #[test]
+    #[ignore = "local e2e; requires authenticated droid CLI"]
+    fn local_e2e_droid_backend_smoke() {
+        let result = local_smoke_run(BackendConfig::Droid(DroidBackendConfig {
+            binary: "droid".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            thinking: "high".to_string(),
+            auto: "high".to_string(),
+            extra_args: Vec::new(),
+        }))
+        .expect("droid local smoke should succeed");
+        assert!(!result.final_response.trim().is_empty());
+    }
+
+    #[test]
+    #[ignore = "local e2e; requires authenticated pi CLI"]
+    fn local_e2e_pi_backend_smoke() {
+        let result = local_smoke_run(BackendConfig::Pi(PiBackendConfig {
+            binary: "pi".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            thinking: "high".to_string(),
+            provider: Some("anthropic".to_string()),
+            extra_args: Vec::new(),
+        }))
+        .expect("pi local smoke should succeed");
+        assert!(!result.final_response.trim().is_empty());
     }
 }

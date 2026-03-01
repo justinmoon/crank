@@ -28,7 +28,7 @@ Top-level fields:
 - `poll_interval_secs`
 - `[timeouts] stall_secs`
 - `[recovery] max_recovery_attempts_per_task, max_failures_before_block, backoff_initial_secs, backoff_max_secs`
-- `[backend]` (`kind = "codex"` or `"mock"`)
+- `[backend]` (`kind = "codex" | "claude" | "droid" | "pi" | "mock"`)
 - `[roles.implementer|reviewer_1|reviewer_2]` with `harness/model/thinking`
   - each role also supports `launch_args = ["..."]`
 - `[[tasks]]` with `id`, `todo_file`, `depends_on`, optional `coord_dir`, optional `completion_file`
@@ -87,3 +87,13 @@ nix flake check
 - `cargo test --frozen --locked`
 - `cargo fmt --all -- --check`
 - `cargo clippy --frozen --all-targets`
+
+## Local Harness E2E (Ignored)
+
+These smoke tests are intentionally ignored in CI because they require local auth/session state.
+
+```bash
+cargo test local_e2e_claude_backend_smoke -- --ignored --nocapture
+cargo test local_e2e_droid_backend_smoke -- --ignored --nocapture
+cargo test local_e2e_pi_backend_smoke -- --ignored --nocapture
+```
